@@ -77,7 +77,7 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 20, cache: npm }
       - uses: actions/setup-java@v5
-        with: { distribution: temurin, java-version: '21' }
+        with: { distribution: temurin, java-version: '17' }
       - run: npm ci
         env: { ELECTRON_SKIP_BINARY_DOWNLOAD: '1' }
       - run: npm run build
@@ -87,7 +87,12 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          set +e
+          ./gradlew assembleRelease --no-daemon --stacktrace > gradle.log 2>&1
+          code=$?
+          tail -n 80 gradle.log
+          if [ $code -ne 0 ]; then grep -E "error|What went wrong|FAILURE|Exception" gradle.log | head -n 15 | while read -r l; do echo "::error::$l"; done; exit $code; fi
+          set -e
           cp app/build/outputs/apk/release/app-release.apk ../MechForce-Android.apk
       - uses: actions/upload-artifact@v4
         with:
