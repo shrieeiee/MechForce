@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MechForce</string>
+    <string name="title_activity_main">MechForce</string>
+    <string name="package_name">com.shrieeiee.mechforce</string>
+    <string name="custom_url_scheme">com.shrieeiee.mechforce</string>
+</resources>

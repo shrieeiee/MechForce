@@ -1,0 +1,87 @@
+{
+  "name": "mechforce",
+  "version": "1.0.0",
+  "description": "MechForce: Heavy Metal Combat \u2014 a modern crossplay remake of Ralph H. Reed's 1989 Amiga game",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "three": "^0.169.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "@fontsource/chakra-petch": "^5.1.0",
+    "@fontsource/rajdhani": "^5.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0"
+  },
+  "author": "shrieeiee",
+  "license": "MIT",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "npm run build && electron .",
+    "server": "npm run build && node dist/server.cjs --port 7373",
+    "test": "node test/sim.mjs",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "dist:linux": "npm run build && electron-builder --linux --x64",
+    "android:sync": "npm run build && npx cap sync android"
+  },
+  "build": {
+    "appId": "com.shrieeiee.mechforce",
+    "productName": "MechForce",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**",
+      "dist/web/**",
+      "dist/server.cjs",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "MechForce-${version}-Windows-${arch}-${target}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "MechForce-${version}-Windows-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "MechForce-${version}-Windows-Portable.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
+      "category": "Game",
+      "icon": "build/icon.png",
+      "executableArgs": [
+        "--no-sandbox"
+      ],
+      "artifactName": "MechForce-${version}-Linux-SteamDeck.${ext}"
+    }
+  }
+}

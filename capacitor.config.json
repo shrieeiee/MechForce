@@ -1,0 +1,7 @@
+{
+  "appId": "com.shrieeiee.mechforce",
+  "appName": "MechForce",
+  "webDir": "dist/web",
+  "server": { "androidScheme": "http", "cleartext": true },
+  "android": { "allowMixedContent": true, "backgroundColor": "#0b0f13" }
+}

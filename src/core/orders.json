@@ -1,0 +1,46 @@
+{
+ "Crossing-East": [
+  "Your unit has been re-assigned to another position.  You are ordered to move your mechs to the East and report for further orders.  Your mechs are needed for a planned assault.  If you should encounter enemy forces you should avoid combat and minimize damage and losses.  It is more important to have your unit at full strength for the major assault than to risk losses in a minor skirmish.",
+  "Enemy forces are gathering for a major offensive.   Intelligence reports a unit enroute heading West.  You are ordered to assemble a force and intercept and destroy them.  You should arrive in the area in time to set up in an advantageous position."
+ ],
+ "Crossing-Random": [
+  "Your unit has been re-assigned to another position.  You are ordered to move your mechs to the East and report for further orders.  Your mechs are needed for a planned assault.  If you should encounter enemy forces you should avoid combat and minimize damage and losses.  It is more important to have your unit at full strength for the major assault than to risk losses in a minor skirmish.",
+  "Enemy forces are gathering for a major offensive.   Intelligence reports a unit enroute heading West.  You are ordered to assemble a force and intercept and destroy them.  You should arrive in the area in time to set up in an advantageous position."
+ ],
+ "Crossing-West": [
+  "Your unit has been re-assigned to another position.  You are ordered to move your mechs to the West and report for further orders.  Your mechs are needed for a planned assault.  If you should encounter enemy forces you should avoid combat and minimize damage and losses.  It is more important to have your unit at full strength for the major assault than to risk losses in a minor skirmish.",
+  "Enemy forces are gathering for a major offensive.   Intelligence reports a unit enroute heading West.  You are ordered to assemble a force and intercept and destroy them.  You should arrive in the area in time to set up in an advantageous position."
+ ],
+ "Destroy-Spy": [
+  "An enemy spy has been reported.  You are ordered to put together a team and find the spy and kill him.  The enemy is trying to recover their spy and the vital data he has acquired.  The spy must not live to reach enemy lines.",
+  "One of our spy's has gotten vital information about the enemy's planned invasion.  You are ordered to put together a team and recover the spy before the enemy finds him."
+ ],
+ "Escort-Pepsi": [
+  "A royal wedding has been announced.  As part of the engagement the Duke has found a rare treasure.  The last known bottle of Pepsi.  You are ordered to assemble a force of mechs and escort this treasure to the Dukes new bride.  This marriage is vital to Duke.  His wedding gift MUST reach his bride.",
+  "Our enemy, the Duke, has formed an alliance by marriage. As part of the wedding contract the Duke is sending a rare treasure, the last bottle of Pepsi, to his bride.  The Pepsi will be heavily guarded.  You are ordered to take your mechs and intercept the convoy carrying the Pepsi. It must not reach its destination.  Capture the Pepsi if possible, but it must not reach its destination.  If it can not be captured it must be destroyed."
+ ],
+ "Find-DataPack": [
+  "A surveilance flyer has gone down in enemy territory.  You are ordered to assemble a team to search for the flyer.  A datapack in the flyer contains vital intelligence data. You are ordered to recover the datapack and return with it. You may have to dig the datapack out of the wreckage.",
+  "Intelligence reports that an enemy flyer has gone down in our territory.  You are ordered to assemble a team and investigate the report.  All enemy forces in the area are to be crushed."
+ ],
+ "Find-Destroy-Spy": [
+  "An enemy spy has been reported.  You are ordered to put together a team and find the spy and kill him.  The enemy is trying to recover their spy and the vital data he has acquired.  The spy must not live to reach enemy lines.",
+  "One of our spy's has gotten vital information about the enemy's planned invasion.  You are ordered to put together a team, pick up the spy and return him to our lines before the enemy neutralizes him."
+ ],
+ "Generic": [
+  "Enemy forces have been reported in the area.  You are  ordered to assemble a unit and investigate the reports. Any enemy mechs found in the area are to be neutralized.",
+  "Enemy forces have been reported in the area. You are ordered to assemble a unit and investigate the reports. Any enemy mechs found in the area are to be neutralized."
+ ],
+ "Hold-Position": [
+  "Intelligence reports an enemy force trying to flank our position.  You are ordered to assemble a team and pick a position to defend.  You must hold that position for at least 500 seconds or the enemy forces will catch our vulnerable flank and cause grave damage to our forces.  It will take at least 500 seconds to prepare for their assault.",
+  "We are making a massed assault on the enemy forces.  One unit has taken up a position to block our assault.  You are ordered to charge their position and destroy all of the mechs."
+ ],
+ "Recover-MemoryCell": [
+  "We have just received word of an ancient memory cell discovered near here.  This cell may contain priceless LosTech information.  You are ordered to assemble a team to recover this memory cell.  The enemy may also have heard of the discovery.  They must not be allowed to recover the memory cell.  If it looks like they may recover the memory cell you are ordered to destroy it, at any cost.",
+  "A spy has just reported the discovery of an ancient memory cell that may contain LosTech information.  You are  ordered to assemble a team and proceed to the reported location of the memory cell at top speed.  The memory cell must be recovered.  If enemy forces are encountered you must prevent them from getting the memory cell, even if you have to destroy it."
+ ],
+ "Scout-Random": [
+  "You are ordered to assemble a scouting team to scout the enemy territory before our major offensive.  It is vital that you obtain information on enemy strength in the area and return with the data.  Your team must scout at least half way through the area or as far as necessary to identify ALL enemy mechs.  At least one mech must return with the intelligence data on the enemy mechs.",
+  "Intelligence reports that the enemy is preparing for a major offensive.  We expect them to scout our position prior to the assault.  Your unit is ordered to intercept this scouting team and destroy them.  The enemy mechs must not be allowed to return with intelligence data on our position.  ALL enemy mechs must be captured or  destroyed."
+ ]
+}
