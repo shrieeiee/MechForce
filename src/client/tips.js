@@ -228,7 +228,8 @@ export const MANUAL = [
   { k: 'turns', t: 'Turn order', body: `
     <p>Each round, every force rolls two dice for <b>initiative</b>. The lowest roll moves first; the highest goes last and gets to react.</p>
     <p>Forces then alternate, activating <b>one mech at a time</b>. An activation is: <b>move</b>, then <b>attack</b>. When all mechs have acted, the round ends. The strip at the top of the screen shows the order and which mechs are still waiting.</p>
-    <p>A round is 50 seconds of battle time, so "hold for 500 seconds" means 10 rounds.</p>` },
+    <p>A round is 50 seconds of battle time, so "hold for 500 seconds" means 10 rounds.</p>
+    <p><b>Up to four forces</b> can fight, each commanded by a player or the computer. In team games (any mission, or Search &amp; Destroy with Teams on) forces on the same team share an edge of the map, can't shoot each other and win together. Each force still takes its own turns. Search &amp; Destroy can also be a free-for-all.</p>` },
   { k: 'move', t: 'Moving', body: `
     <p>Choose <b>walk</b>, <b>run</b> or <b>jump</b>. Reachable hexes light up (blue, orange, purple). Pick a hex, then pick which way to face.</p>
     <p>Terrain costs movement points: clear 1, light woods 2, heavy woods 3, rough 2, water 2–4, plus 1 per level climbed. Turning on the spot costs 1 per hex-side.</p>

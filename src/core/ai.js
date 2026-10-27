@@ -14,21 +14,21 @@ function goalFor(st, m) {
   const mis = missionOf(st);
   const { w } = st.map;
   const it = st.item;
-  if (mis.id === 'crossing' && m.side === 0) return { x: w - 1, y: m.y, weight: 3, edge: 'E' };
+  if (mis.id === 'crossing' && m.team === 0) return { x: w - 1, y: m.y, weight: 3, edge: 'E' };
   if (it && !it.gone) {
     if (it.carrier === m.id) {
-      if (mis.homeExit) return { x: m.side === 0 ? 0 : w - 1, y: m.y, weight: 4, edge: m.side === 0 ? 'W' : 'E' };
-      if (mis.id === 'pepsi') return { x: m.side === 0 ? w - 1 : 0, y: m.y, weight: 4, edge: m.side === 0 ? 'E' : 'W' };
+      if (mis.homeExit) return { x: m.team === 0 ? 0 : w - 1, y: m.y, weight: 4, edge: m.team === 0 ? 'W' : 'E' };
+      if (mis.id === 'pepsi') return { x: m.team === 0 ? w - 1 : 0, y: m.y, weight: 4, edge: m.team === 0 ? 'E' : 'W' };
       if (mis.spy) return { x: w - 1, y: m.y, weight: 4, edge: 'E' };
     }
-    if (it.carrier === null && (mis.carriers.includes(m.side) || (mis.spy && m.side === 0))) return { x: it.x, y: it.y, weight: 2.5 };
+    if (it.carrier === null && (mis.carriers.includes(m.team) || (mis.spy && m.team === 0))) return { x: it.x, y: it.y, weight: 2.5 };
     if (it.carrier !== null) {
       const c = st.mechs[it.carrier];
-      if (c && c.side !== m.side) return { x: c.x, y: c.y, weight: 1.5, hunt: c.id };
-      if (c && c.side === m.side) return { x: c.x, y: c.y, weight: 0.6 };
+      if (c && c.team !== m.team) return { x: c.x, y: c.y, weight: 1.5, hunt: c.id };
+      if (c && c.team === m.team) return { x: c.x, y: c.y, weight: 0.6 };
     }
   }
-  if (mis.scout && m.side === 0) {
+  if (mis.scout && m.team === 0) {
     if (m.scouted) return { x: 0, y: m.y, weight: 4, edge: 'W' };
     return { x: Math.floor(w * 2 / 3) + 1, y: m.y, weight: 2.5 };
   }
@@ -50,8 +50,8 @@ function bestVolley(opts, budget) {
 }
 
 function evalPositions(st, m) {
-  const enemies = st.mechs.filter((e) => operational(e) && e.side !== m.side);
-  const allies = st.mechs.filter((e) => operational(e) && e.side === m.side && e.id !== m.id);
+  const enemies = st.mechs.filter((e) => operational(e) && e.team !== m.team);
+  const allies = st.mechs.filter((e) => operational(e) && e.team === m.team && e.id !== m.id);
   const goal = goalFor(st, m);
   const { w, h } = st.map;
   const avgRange = m.weapons.filter((x) => x.ok).reduce((s, x) => s + x.rng, 0) / Math.max(1, m.weapons.filter((x) => x.ok).length) || 6;
@@ -154,7 +154,7 @@ function evalPositions(st, m) {
 function moveModE(e) { return moveMod(e.lastMove.mode, e.lastMove.hexes) + (e.prone ? 1 : 0); }
 
 function chooseAttack(st, m) {
-  const enemies = st.mechs.filter((e) => operational(e) && e.side !== m.side);
+  const enemies = st.mechs.filter((e) => operational(e) && e.team !== m.team);
   let best = { v: 0, cmd: null };
   const budget = dissipation(st, m) - m.heat - (st.act ? st.act.heatGen : 0) + 5;
   for (const e of enemies) {

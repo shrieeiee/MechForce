@@ -60,7 +60,7 @@ export class Room {
     this.local = local;
     this.clients = new Map();
     this.hostId = null;
-    this.settings = { mission: 'generic', mapSize: 'M', theme: 'temperate', tonnage: 200, seed: rid(), sides: 2, lanceSize: 4 };
+    this.settings = { mission: 'generic', mapSize: 'M', theme: 'temperate', tonnage: 200, seed: rid(), sides: 2, lanceSize: 4, teamMode: 'ffa' };
     this.slots = [];
     this.game = null;
     this.aiTimer = null;
@@ -74,9 +74,24 @@ export class Room {
     this.settings.sides = n;
     while (this.slots.length < n) {
       const i = this.slots.length;
-      this.slots.push({ ctrl: 'ai', name: SIDE_NAMES[i], color: SIDE_COLORS[i], lance: autoLance(this.code + i + rid(), this.settings.tonnage), ready: false });
+      this.slots.push({ ctrl: 'ai', name: SIDE_NAMES[i], color: SIDE_COLORS[i], lance: autoLance(this.code + i + rid(), this.settings.tonnage), ready: false, team: i % 2 });
     }
     this.slots.length = n;
+    this.normalizeTeams();
+  }
+
+  // Objective missions and "Teams" mode use two teams; free-for-all gives every force its own.
+  get teamCount() { return this.settings.mission !== 'generic' || this.settings.teamMode === 'teams' ? 2 : this.slots.length; }
+  normalizeTeams() {
+    const ffa = this.settings.mission === 'generic' && this.settings.teamMode !== 'teams';
+    this.slots.forEach((sl, i) => {
+      if (ffa) sl.team = i;
+      else if (!Number.isInteger(sl.team) || sl.team > 1) sl.team = i % 2;
+    });
+    if (!ffa && this.slots.length >= 2) {
+      if (!this.slots.some((x) => x.team === 0)) this.slots[0].team = 0;
+      if (!this.slots.some((x) => x.team === 1)) this.slots[this.slots.length - 1].team = 1;
+    }
   }
 
   // ---- clients
@@ -143,11 +158,22 @@ export class Room {
       case 'settings': {
         if (!isHost || this.game) return err('Only the host can change settings');
         const s = msg.settings || {};
-        for (const k of ['mission', 'mapSize', 'theme', 'tonnage', 'seed', 'sides', 'lanceSize']) if (s[k] !== undefined) this.settings[k] = s[k];
+        for (const k of ['mission', 'mapSize', 'theme', 'tonnage', 'seed', 'sides', 'lanceSize', 'teamMode']) if (s[k] !== undefined) this.settings[k] = s[k];
         this.settings.tonnage = Math.max(20, Math.min(800, +this.settings.tonnage || 200));
         this.settings.lanceSize = Math.max(1, Math.min(4, +this.settings.lanceSize || 4));
         this.resizeSlots();
         this.slots.forEach((sl) => { if (sl.ctrl === 'ai') sl.lance = autoLance(rid(), this.settings.tonnage, this.settings.lanceSize); sl.ready = sl.ctrl === 'ai'; if (sl.lance.length > this.settings.lanceSize) sl.lance.length = this.settings.lanceSize; });
+        return this.pushLobby();
+      }
+      case 'team': {
+        if (this.game) return;
+        const sl = this.slots[msg.side];
+        if (!sl) return;
+        if (!isHost && sl.ctrl !== id) return err('Only the host can move other forces between teams');
+        if (this.settings.mission === 'generic' && this.settings.teamMode !== 'teams') return err('Switch Teams on to group forces');
+        sl.team = sl.team === 0 ? 1 : 0;
+        if (!this.slots.some((x) => x.team === 0) || !this.slots.some((x) => x.team === 1)) { sl.team = sl.team === 0 ? 1 : 0; return err('Each team needs at least one force'); }
+        this.slots.forEach((x) => { if (x.ctrl !== 'ai') x.ready = false; });
         return this.pushLobby();
       }
       case 'slot': {
@@ -196,7 +222,7 @@ export class Room {
         if (problems.length) return err(problems[0]);
         this.game = createGame({
           seed: this.settings.seed, mission: this.settings.mission, mapSize: this.settings.mapSize, theme: this.settings.theme,
-          sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, gunnery: 4, piloting: 5 })),
+          sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5 })),
         });
         this.broadcast({ t: 'start', state: this.game });
         this.pushLobby();

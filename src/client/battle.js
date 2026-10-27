@@ -29,6 +29,12 @@ export class Battle {
   get session() { return this.app.session; }
   get myId() { return this.session.myId; }
   mySides() { return this.state ? this.state.sides.map((s, i) => (s.ctrl === this.myId ? i : -1)).filter((i) => i >= 0) : []; }
+  teamMode() { const st = this.state; return !!(st && st.teams && st.teams.some((t) => t.members.length > 1)); }
+  isAlly(side) {
+    const st = this.state; if (!st || !st.sides[side]) return false;
+    const mine = this.mySides();
+    return !this.isMine(side) && mine.some((s) => (st.sides[s].team ?? s) === (st.sides[side].team ?? side));
+  }
   isMine(side) { return this.state && this.state.sides[side] && this.state.sides[side].ctrl === this.myId; }
 
   // ------------------------------------------------------------ lifecycle
@@ -55,7 +61,7 @@ export class Battle {
   setExitEdges() {
     const st = this.state, mis = missionOf(st), w = st.map.w;
     const edges = [];
-    const col = (s) => st.sides[s].color;
+    const col = (t) => (st.teams && st.teams[t] ? st.teams[t].color : st.sides[t].color);
     if (mis.id === 'crossing') edges.push({ x: w - 1, color: col(0) });
     if (mis.homeExit) { edges.push({ x: 0, color: col(0) }); if (mis.carriers.includes(1)) edges.push({ x: w - 1, color: col(1) }); }
     if (mis.id === 'pepsi') edges.push({ x: w - 1, color: col(0) }, { x: 0, color: col(1) });
@@ -88,7 +94,9 @@ export class Battle {
     }
     if (e.k === 'win') {
       const me = this.mySides();
-      if (e.side >= 0 && me.includes(e.side)) sfx('win'); else if (me.length) sfx('lose');
+      const myTeams = me.map((s) => st.sides[s].team ?? s);
+      const wt = e.team ?? e.side;
+      if (wt >= 0 && myTeams.includes(wt)) sfx('win'); else if (me.length) sfx('lose');
     }
   }
 
@@ -154,7 +162,7 @@ export class Battle {
 
   bestFacingAt(reach, x, y, m) {
     let best = -1, bc = Infinity;
-    const enemies = this.state.mechs.filter((e) => operational(e) && e.side !== m.side);
+    const enemies = this.state.mechs.filter((e) => operational(e) && (e.team ?? e.side) !== (m.team ?? m.side));
     let near = null, nd = 99;
     for (const e of enemies) { const d = distance(x, y, e.x, e.y); if (d < nd) { nd = d; near = e; } }
     const want = near ? facingToward(x, y, near.x, near.y) : m.f;
@@ -244,7 +252,7 @@ export class Battle {
 
   enterAttack(id) {
     const st = this.state, m = st.mechs[id];
-    const enemies = st.mechs.filter((e) => operational(e) && e.side !== m.side);
+    const enemies = st.mechs.filter((e) => operational(e) && (e.team ?? e.side) !== (m.team ?? m.side));
     const scored = enemies.map((e) => {
       let ed = 0;
       for (const w of m.weapons) { const th = toHit(st, m, e, w); if (th.ok) ed += expectedDamage(w, th.p); }
@@ -577,7 +585,7 @@ export class Battle {
       }).join('');
       const now = i === side && !st.over;
       return `${k ? `<span class="tr-arrow">${ICON.arrow}</span>` : ''}<div class="tr-side ${now ? 'now' : ''}" style="--side:${s.color}">
-        <span class="tr-name">${esc(s.name.replace(/ Force$/, ''))}${this.isMine(i) ? ' <small>you</small>' : ''}</span>
+        <span class="tr-name">${esc(s.name.replace(/ Force$/, ''))}${this.isMine(i) ? ' <small>you</small>' : this.isAlly(i) ? ' <small>ally</small>' : ''}${this.teamMode() ? `<em class="tr-team">T${(s.team ?? i) + 1}</em>` : ''}</span>
         <span class="tr-die">${ICON.dice}${s.init}</span><span class="tr-pips">${pips}</span></div>`;
     }).join('');
     return `<div class="tracker panel" ${attr('Turn order', turnOrderTip(st))}>
@@ -839,7 +847,7 @@ export class Battle {
         <div class="stat"><div class="k">Objective</div><div style="font-size:15px">${esc(side.goal)}</div></div>
         <div class="stat"><div class="k">Time limit</div><div class="v">${mis.rounds} rounds</div></div>
         <div class="stat"><div class="k">Map</div><div class="v" style="font-size:16px">${esc(theme)} ${st.map.w}×${st.map.h}</div></div>
-        <div class="stat"><div class="k">Forces</div><div style="font-size:15px">${st.sides.map((x, i) => `<span style="color:${x.color}">${esc(x.name)}</span> ${st.mechs.filter((m) => m.side === i).length}`).join(' · ')}</div></div>
+        <div class="stat"><div class="k">${this.teamMode() ? 'Teams' : 'Forces'}</div><div style="font-size:15px">${(st.teams || st.sides.map((x, i) => ({ members: [i] }))).map((t, ti) => t.members.map((i) => `<span style="color:${st.sides[i].color}">${esc(st.sides[i].name)}</span> ${st.mechs.filter((m) => m.side === i).length}`).join(' + ')).join(' <span class="faint">vs</span> ')}</div></div>
       </div>
       <div class="howto">
         <div><b>1</b> Each round, forces take turns activating one mech.</div>

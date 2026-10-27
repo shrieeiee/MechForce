@@ -376,7 +376,8 @@ class App {
       { k: 'tonnage', label: 'Tonnage limit', value: L.settings.tonnage + 't', opts: [100, 120, 140, 160, 180, 200, 240, 280, 320, 360, 400] },
       { k: 'lanceSize', label: 'Mechs per side', value: String(L.settings.lanceSize), opts: [1, 2, 3, 4] },
     ];
-    if (mis.sides[1] > 2) defs.push({ k: 'sides', label: 'Sides', value: String(L.settings.sides), opts: [2, 3, 4] });
+    defs.push({ k: 'sides', label: 'Forces (players or AI)', value: String(L.settings.sides), opts: [2, 3, 4] });
+    if (mis.id === 'generic') defs.push({ k: 'teamMode', label: 'Teams', value: L.settings.teamMode === 'teams' ? 'Two teams' : 'Free-for-all', opts: ['ffa', 'teams'] });
     return defs;
   }
 
@@ -433,12 +434,16 @@ class App {
       settingsEl.appendChild(rr);
     }
     const slotsEl = $('.slots', el);
-    L.slots.forEach((sl, i) => {
+    const teamsOn = mis.id !== 'generic' || L.settings.teamMode === 'teams';
+    const order = L.slots.map((sl, i) => i).sort((a, b) => (teamsOn ? L.slots[a].team - L.slots[b].team : 0) || a - b);
+    order.forEach((i) => {
+      const sl = L.slots[i];
       const mine = sl.ctrl === me;
       const who = sl.ctrl === 'ai' ? 'Computer' : sl.ctrl === 'open' ? 'Open' : mine ? 'You' : (L.clients.find((c) => c.id === sl.ctrl)?.name || 'Player');
       const tons = lanceTons(sl.lance);
       const card = html(`<div class="slot panel" style="--side:${sl.color}">
         <div class="slot-head"><span class="sw"></span><b>${esc(sl.name)}</b><span class="who">${esc(who)}</span></div>
+        ${teamsOn ? `<div class="team-badge t${sl.team}" ${tipAttr(`Team ${sl.team + 1}`, `<p>${esc(mis.goal[mis.id === 'generic' ? 0 : sl.team])}</p><p>Forces on the same team share a deployment edge, can't shoot each other and win together.</p>`)}>Team ${sl.team + 1}${mis.id !== 'generic' ? ` · ${esc(mis.goal[sl.team].split(/[.:]/)[0])}` : ''}</div>` : ''}
         <div class="lance-list">${sl.lance.map((e) => `<div><span>${typeof e === 'object' ? '★ ' : ''}${esc(entryName(e))}</span><span class="num faint">${entryTons(e)}t</span></div>`).join('') || '<div class="faint">No mechs selected</div>'}</div>
         <div class="tons-bar ${tons > L.settings.tonnage ? 'over' : ''}"><s style="width:${Math.min(100, tons / L.settings.tonnage * 100)}%"></s></div>
         <div class="dim num" style="font-size:14px">${tons} / ${L.settings.tonnage} tons${remote && sl.ctrl !== 'ai' && sl.ctrl !== 'open' ? ` · <span class="ready-chip ${sl.ready ? 'on' : 'off'}">${sl.ready ? 'Ready' : 'Not ready'}</span>` : ''}</div>
@@ -446,9 +451,10 @@ class App {
       const acts = $('.acts', card);
       const addBtn = (key, label, fn) => { const b = html(`<div class="btn nav" data-key="${key}">${esc(label)}</div>`); b.addEventListener('click', fn); acts.appendChild(b); };
       if (mine || (this.isHost && sl.ctrl === 'ai')) addBtn(`lance-${i}`, mine ? 'Choose mechs' : 'Choose computer mechs', () => this.showBay({ side: i, lance: sl.lance.slice(), limit: L.settings.tonnage, max: L.settings.lanceSize }));
-      if (!mine && (sl.ctrl === 'open' || sl.ctrl === 'ai') && (remote || this.localKind === 'hotseat')) addBtn(`take-${i}`, 'Command this side', () => this.session.send({ t: 'slot', side: i, ctrl: 'me' }));
+      if (!mine && (sl.ctrl === 'open' || sl.ctrl === 'ai') && (remote || this.localKind === 'hotseat' || L.slots.length > 2)) addBtn(`take-${i}`, 'Command this side', () => this.session.send({ t: 'slot', side: i, ctrl: 'me' }));
       if (this.isHost && sl.ctrl !== 'ai' && (remote || L.slots.filter((s) => s.ctrl === me).length > 1)) addBtn(`ai-${i}`, 'Hand to computer', () => this.session.send({ t: 'slot', side: i, ctrl: 'ai' }));
       if (this.isHost && remote && sl.ctrl === 'ai') addBtn(`open-${i}`, 'Open for a player', () => this.session.send({ t: 'slot', side: i, ctrl: 'open' }));
+      if (teamsOn && L.slots.length > 2 && (this.isHost || mine)) addBtn(`team-${i}`, `Move to Team ${sl.team === 0 ? 2 : 1}`, () => this.session.send({ t: 'team', side: i }));
       if (mine && remote && !this.isHost) addBtn(`ready-${i}`, sl.ready ? 'Not ready' : 'Ready', () => this.session.send({ t: 'ready', side: i, v: !sl.ready }));
       slotsEl.appendChild(card);
     });
@@ -737,18 +743,22 @@ class App {
   showResults(st) {
     const w = st.winner;
     const me = this.battle.mySides();
-    const won = w && w.side >= 0 && me.includes(w.side);
-    const title = !w ? 'Mission over' : w.side < 0 ? 'Draw' : me.length ? (won ? 'Victory' : 'Defeat') : `${st.sides[w.side].name} wins`;
+    const wTeam = w ? (w.team ?? w.side) : -1;
+    const teamOfS = (i) => st.sides[i].team ?? i;
+    const won = w && wTeam >= 0 && me.some((s) => teamOfS(s) === wTeam);
+    const tName = (t) => (st.teams && st.teams[t] ? st.teams[t].name : st.sides[t].name);
+    const tColor = (t) => (st.teams && st.teams[t] ? st.teams[t].color : st.sides[t].color);
+    const title = !w ? 'Mission over' : wTeam < 0 ? 'Draw' : me.length ? (won ? 'Victory' : 'Defeat') : `${tName(wTeam)} win`;
     const rows = st.sides.map((s, i) => {
       const ms = st.mechs.filter((m) => m.side === i);
       const dmg = ms.reduce((a, m) => a + m.stats.dmg, 0), kills = ms.reduce((a, m) => a + m.stats.kills, 0);
       const alive = ms.filter((m) => !m.dead).length;
       const acc = ms.reduce((a, m) => a + m.stats.shots, 0) ? Math.round(100 * ms.reduce((a, m) => a + m.stats.hits, 0) / ms.reduce((a, m) => a + m.stats.shots, 0)) : 0;
-      return `<tr><td style="color:${s.color};font-weight:700">${esc(s.name)}</td><td class="num">${alive}/${ms.length}</td><td class="num">${dmg}</td><td class="num">${kills}</td><td class="num">${acc}%</td></tr>`;
+      return `<tr class="${teamOfS(i) === wTeam ? 'won' : ''}"><td style="color:${s.color};font-weight:700">${esc(s.name)}${st.teams && st.teams.some((t) => t.members.length > 1) ? ` <span class="faint">· Team ${teamOfS(i) + 1}</span>` : ''}</td><td class="num">${alive}/${ms.length}</td><td class="num">${dmg}</td><td class="num">${kills}</td><td class="num">${acc}%</td></tr>`;
     }).join('');
     const mvp = st.mechs.slice().sort((a, b) => b.stats.dmg + b.stats.kills * 30 - (a.stats.dmg + a.stats.kills * 30))[0];
     const canRematch = this.isHost;
-    const el = html(`<div class="modal wide panel" style="border-top:3px solid ${w && w.side >= 0 ? st.sides[w.side].color : 'var(--amber)'}">
+    const el = html(`<div class="modal wide panel" style="border-top:3px solid ${w && wTeam >= 0 ? tColor(wTeam) : 'var(--amber)'}">
       <div class="eyebrow">${esc(MISSIONS.find((m) => m.id === st.mission).name)} · ${st.round} rounds · T+${(st.round - 1) * 50}s</div>
       <h2 style="font-size:40px">${esc(title)}</h2><p class="brief">${esc(w ? w.reason : '')}</p>
       <div style="overflow-x:auto"><table class="results-table"><tr><th>Force</th><th>Mechs left</th><th>Damage dealt</th><th>Kills</th><th>Accuracy</th></tr>${rows}</table></div>

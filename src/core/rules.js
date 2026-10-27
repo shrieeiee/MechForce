@@ -18,17 +18,40 @@ export function createGame(setup) {
   const map = generateMap(seed, setup.mapSize || 'M', setup.theme || 'temperate');
   const st = {
     v: 1, seed, rng: hashSeed('dice' + seed), mission: mission.id, map, round: 0, over: false,
-    sides: [], mechs: [], order: [], turnIdx: 0, act: null, item: null, winner: null, log: [], seq: 0,
+    sides: [], teams: [], mechs: [], order: [], turnIdx: 0, act: null, item: null, winner: null, log: [], seq: 0,
   };
+  const teamOfSide = assignTeams(setup.sides.slice(0, nSides), mission);
+  const nTeams = Math.max(...teamOfSide) + 1;
+  for (let t = 0; t < nTeams; t++) st.teams.push({ members: [], name: '', color: '' });
+  teamOfSide.forEach((t, s) => st.teams[t].members.push(s));
   let pilotIx = Math.floor(nextRand(st) * PILOT_NAMES.length);
   for (let s = 0; s < nSides; s++) {
     const sd = setup.sides[s];
+    const team = teamOfSide[s];
+    const role = mission.id === 'generic' ? 0 : team;
     st.sides.push({
-      name: sd.name || SIDE_NAMES[s], color: sd.color || SIDE_COLORS[s], ctrl: sd.ctrl || 'ai', init: 0,
-      goal: mission.goal[Math.min(s, mission.goal.length - 1)], brief: mission.brief[Math.min(s, mission.brief.length - 1)],
+      name: sd.name || SIDE_NAMES[s], color: sd.color || SIDE_COLORS[s], ctrl: sd.ctrl || 'ai', init: 0, team,
+      goal: mission.goal[Math.min(role, mission.goal.length - 1)], brief: mission.brief[Math.min(role, mission.brief.length - 1)],
       conceded: false, gunnery: sd.gunnery ?? 4, piloting: sd.piloting ?? 5,
     });
-    const zone = deployZone(map, s, nSides);
+  }
+  st.teams.forEach((tm) => {
+    tm.name = tm.members.length === 1 ? st.sides[tm.members[0]].name : tm.members.map((i) => st.sides[i].name.replace(/ Force$/, '')).join(' & ');
+    tm.color = st.sides[tm.members[0]].color;
+  });
+  for (let s = 0; s < nSides; s++) {
+    const sd = setup.sides[s];
+    const team = teamOfSide[s];
+    const mates = st.teams[team].members;
+    const zoneIdx = team;
+    let zone = deployZone(map, zoneIdx, nTeams);
+    if (mates.length > 1) {
+      const k = mates.indexOf(s), n = mates.length;
+      const byAxis = zone.slice().sort((a, b) => (zoneIdx < 2 ? a.y - b.y || a.x - b.x : a.x - b.x || a.y - b.y));
+      const chunk = byAxis.slice(Math.floor(k * byAxis.length / n), Math.floor((k + 1) * byAxis.length / n));
+      const cy = chunk.reduce((q, p) => q + p.y, 0) / chunk.length, cx = chunk.reduce((q, p) => q + p.x, 0) / chunk.length;
+      zone = chunk.sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy) || (zoneIdx === 0 ? b.x - a.x : a.x - b.x));
+    }
     const lance = (sd.lance || []).slice(0, 4);
     lance.forEach((entry, i) => {
       let tpl;
@@ -38,8 +61,10 @@ export function createGame(setup) {
       } else tpl = mechByName(typeof entry === 'string' ? entry : entry.design) || MECHS[0];
       const pos = zone[i * 2 % zone.length] || zone[0];
       const pilot = (typeof entry === 'object' && entry.pilot) || PILOT_NAMES[(pilotIx++) % PILOT_NAMES.length];
-      const f = s === 0 ? 0 : s === 1 ? 3 : s === 2 ? 5 : 1;
-      st.mechs.push(makeMech(st.mechs.length, s, tpl, pilot, pos.x, pos.y, f, st.sides[s]));
+      const f = team === 0 ? 0 : team === 1 ? 3 : team === 2 ? 5 : 1;
+      const mech = makeMech(st.mechs.length, s, tpl, pilot, pos.x, pos.y, f, st.sides[s]);
+      mech.team = team;
+      st.mechs.push(mech);
     });
   }
   // Mission item
@@ -47,7 +72,7 @@ export function createGame(setup) {
     const { w, h } = map;
     let pos;
     if (mission.itemZone === 'carried') {
-      const carrier = st.mechs.filter((m) => m.side === 0).sort((a, b) => b.tons - a.tons)[0]; // the heavily guarded convoy
+      const carrier = st.mechs.filter((m) => m.team === 0).sort((a, b) => b.tons - a.tons)[0]; // the heavily guarded convoy
       st.item = { name: mission.item, x: carrier.x, y: carrier.y, carrier: carrier.id, gone: false };
       carrier.carrying = true;
     } else {
@@ -65,6 +90,24 @@ export function createGame(setup) {
   }
   startRound(st, []);
   return st;
+}
+
+// Work out a team number for each force. Objective missions always have exactly two
+// teams (team 0 plays the first briefing, team 1 the second). Search & Destroy can be
+// free-for-all (every force on its own) or any grouping the lobby chose.
+export function assignTeams(sides, mission) {
+  const n = sides.length;
+  const raw = sides.map((sd, i) => (Number.isInteger(sd.team) ? sd.team : i));
+  if (mission.id !== 'generic') {
+    const t = raw.map((v) => (v % 2 === 0 ? 0 : 1));
+    if (!t.includes(0)) t[0] = 0;
+    if (!t.includes(1)) t[n - 1] = 1;
+    return t;
+  }
+  const map = new Map();
+  const t = raw.map((v) => { if (!map.has(v)) map.set(v, map.size); return map.get(v); });
+  if (map.size === 1) return sides.map((_, i) => i);
+  return t;
 }
 
 function makeMech(id, side, tpl, pilot, x, y, f, sd) {
@@ -94,6 +137,9 @@ export const mechAt = (st, x, y) => st.mechs.find((m) => operational(m) && m.x =
 export const tileOf = (st, x, y) => st.map.t[y * st.map.w + x];
 export const elevOf = (st, x, y) => st.map.e[y * st.map.w + x];
 export const sideAlive = (st, s) => !st.sides[s].conceded && st.mechs.some((m) => m.side === s && operational(m));
+export const teamOf = (st, side) => (st.sides[side] ? st.sides[side].team ?? side : side);
+export const teamAlive = (st, t) => st.teams[t].members.some((s) => sideAlive(st, s));
+export const isEnemy = (a, b) => (a.team ?? a.side) !== (b.team ?? b.side);
 export const activeSide = (st) => (st.over ? -1 : st.order[st.turnIdx]);
 export const secondsElapsed = (st) => Math.max(0, st.round - 1) * ROUND_SECONDS;
 
@@ -147,7 +193,7 @@ function enterCost(st, m, fx, fy, tx, ty, mode) {
   if (Math.abs(de) > 2) return -1;
   if (mode === 'run' && t === 5) return -1;
   const o = mechAt(st, tx, ty);
-  if (o && o.side !== m.side) return -1;
+  if (o && isEnemy(o, m)) return -1;
   return TERRAIN[t].cost + Math.abs(de);
 }
 
@@ -275,7 +321,7 @@ export function toHit(st, att, tgt, w, opts = {}) {
   const mode = opts.mode || (st.act && st.act.id === att.id ? att.lastMove.mode : 'stand');
   const mods = [];
   const add = (label, v) => { if (v) mods.push({ label, v }); };
-  if (!operational(tgt) || tgt.side === att.side) return { ok: false, reason: 'Invalid target', tn: 99, mods };
+  if (!operational(tgt) || !isEnemy(tgt, att)) return { ok: false, reason: 'Invalid target', tn: 99, mods };
   const dist = distance(pos.x, pos.y, tgt.x, tgt.y);
   const los = opts.los || lineOfSight(st, pos.x, pos.y, tgt.x, tgt.y);
   if (!los.ok) return { ok: false, reason: 'No line of sight', tn: 99, mods, dist };
@@ -364,7 +410,7 @@ function destroyMech(st, m, ev, by, why) {
   m.dead = true;
   ev.push({ k: 'destroyed', id: m.id, by: by ? by.id : -1 });
   log(st, ev, `${m.design} (${m.pilot.name}) is DESTROYED${why ? ' — ' + why : ''}!`, { tone: 'kill', side: m.side });
-  if (by && by.side !== m.side) by.stats.kills++;
+  if (by && isEnemy(by, m)) by.stats.kills++;
   dropItem(st, m, ev);
   if (st.mission === 'spy' && st.item && st.item.carrier === m.id) {
     // the spy dies with his ride
@@ -506,13 +552,14 @@ export function applyDamage(st, m, loc, rear, dmg, ev, by, opts = {}) {
 }
 
 // ---------------------------------------------------------------- objective helpers
-function setWinner(st, ev, side, reason) {
+function setWinner(st, ev, team, reason) {
   if (st.over) return;
   st.over = true;
-  st.winner = { side, reason };
+  const side = team >= 0 ? st.teams[team].members[0] : -1;
+  st.winner = { team, side, reason };
   st.act = null;
-  ev.push({ k: 'win', side, reason });
-  log(st, ev, side < 0 ? `Mission ends in a draw — ${reason}` : `${st.sides[side].name} wins! ${reason}`, { tone: 'win' });
+  ev.push({ k: 'win', team, side, reason });
+  log(st, ev, team < 0 ? `Mission ends in a draw — ${reason}` : `${st.teams[team].name} win${st.teams[team].members.length > 1 ? '' : 's'}! ${reason}`, { tone: 'win' });
 }
 
 function afterMove(st, m, ev) {
@@ -520,38 +567,38 @@ function afterMove(st, m, ev) {
   const { w } = st.map;
   const it = st.item;
   if (it && !it.gone && it.carrier === null && m.x === it.x && m.y === it.y) {
-    if (mis.spy && m.side === 0) {
+    if (mis.spy && m.team === 0) {
       it.gone = true;
       log(st, ev, `${m.design} finds and eliminates the spy!`, { tone: 'kill' });
       setWinner(st, ev, 0, 'The spy is dead.');
       return true;
     }
-    if (mis.carriers.includes(m.side) && !m.carrying) {
+    if (mis.carriers.includes(m.team) && !m.carrying) {
       it.carrier = m.id; m.carrying = true;
       ev.push({ k: 'pickup', id: m.id });
       log(st, ev, `${m.design} picks up the ${it.name}!`, { tone: 'info', side: m.side });
     }
   }
   if (it && it.carrier === m.id) { it.x = m.x; it.y = m.y; }
-  if (mis.scout && m.side === 0 && m.x >= Math.floor(w * 2 / 3) && !m.scouted) {
+  if (mis.scout && m.team === 0 && m.x >= Math.floor(w * 2 / 3) && !m.scouted) {
     m.scouted = true;
     log(st, ev, `${m.design} has scouted the enemy rear area. Now get home!`, { tone: 'info', side: 0 });
   }
   // exits
   const atE = m.x === w - 1, atW = m.x === 0;
   let exit = false, winNow = null;
-  if (mis.id === 'crossing' && m.side === 0 && atE) exit = true;
-  if (mis.homeExit && m.carrying && ((m.side === 0 && atW) || (m.side === 1 && atE))) { exit = true; winNow = `${m.design} escaped with the ${it.name}.`; }
-  if (mis.id === 'pepsi' && m.carrying && ((m.side === 0 && atE) || (m.side === 1 && atW))) {
-    exit = true; winNow = m.side === 0 ? 'The Pepsi reached the bride!' : 'The Pepsi was captured!';
+  if (mis.id === 'crossing' && m.team === 0 && atE) exit = true;
+  if (mis.homeExit && m.carrying && ((m.team === 0 && atW) || (m.team === 1 && atE))) { exit = true; winNow = `${m.design} escaped with the ${it.name}.`; }
+  if (mis.id === 'pepsi' && m.carrying && ((m.team === 0 && atE) || (m.team === 1 && atW))) {
+    exit = true; winNow = m.team === 0 ? 'The Pepsi reached the bride!' : 'The Pepsi was captured!';
   }
-  if (mis.spy && m.carrying && m.side === 1 && atE) { exit = true; winNow = 'The spy made it home.'; }
-  if (mis.scout && m.side === 0 && m.scouted && atW) { exit = true; winNow = 'Scouting data delivered.'; }
+  if (mis.spy && m.carrying && m.team === 1 && atE) { exit = true; winNow = 'The spy made it home.'; }
+  if (mis.scout && m.team === 0 && m.scouted && atW) { exit = true; winNow = 'Scouting data delivered.'; }
   if (exit) {
     m.exited = true;
     ev.push({ k: 'exit', id: m.id });
     log(st, ev, `${m.design} leaves the battlefield.`, { tone: 'info', side: m.side });
-    if (winNow) setWinner(st, ev, m.side, winNow);
+    if (winNow) setWinner(st, ev, m.team, winNow);
     return true;
   }
   return false;
@@ -560,15 +607,15 @@ function afterMove(st, m, ev) {
 function checkVictory(st, ev) {
   if (st.over) return;
   const mis = missionOf(st);
-  const alive = st.sides.map((_, s) => sideAlive(st, s));
+  const alive = st.teams.map((_, t) => teamAlive(st, t));
   const nAlive = alive.filter(Boolean).length;
   if (mis.id === 'crossing') {
-    const n0 = st.mechs.filter((m) => m.side === 0).length;
+    const n0 = st.mechs.filter((m) => m.team === 0).length;
     const need = Math.ceil(n0 / 2);
-    const ex = st.mechs.filter((m) => m.side === 0 && m.exited).length;
-    const live = st.mechs.filter((m) => m.side === 0 && operational(m)).length;
+    const ex = st.mechs.filter((m) => m.team === 0 && m.exited).length;
+    const live = st.mechs.filter((m) => m.team === 0 && operational(m) && !st.sides[m.side].conceded).length;
     if (ex >= need) return setWinner(st, ev, 0, `${ex} mechs crossed safely.`);
-    if (ex + live < need || st.sides[0].conceded) return setWinner(st, ev, 1, 'The crossing was stopped.');
+    if (ex + live < need) return setWinner(st, ev, 1, 'The crossing was stopped.');
     if (!alive[1]) return setWinner(st, ev, 0, 'The blocking force was destroyed.');
     return;
   }
@@ -589,7 +636,7 @@ function roundLimit(st, ev) {
   };
   if (byId[mis.id]) { setWinner(st, ev, byId[mis.id][0], byId[mis.id][1]); return true; }
   // generic: most surviving structure wins
-  const score = st.sides.map((_, s) => st.mechs.filter((m) => m.side === s && operational(m))
+  const score = st.teams.map((_, t) => st.mechs.filter((m) => m.team === t && operational(m))
     .reduce((t, m) => t + m.armor.reduce((a, b) => a + b, 0) + m.internal.reduce((a, b) => a + b, 0), 0));
   const best = Math.max(...score);
   const winners = score.map((v, i) => (v === best ? i : -1)).filter((i) => i >= 0);

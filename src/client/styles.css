@@ -500,3 +500,8 @@ table.tt td { padding: 2px 8px 2px 0; vertical-align: top; } table.tt td:first-c
 @media (max-width: 700px) { .lab-grid { grid-template-columns: 1fr; } }
 @media (max-height: 520px) { .lab-viewer { min-height: 150px; } .slots-map { grid-template-columns: repeat(8, 1fr); gap: 4px; padding: 6px; } .cells { grid-template-columns: repeat(3, 1fr); } .cells i { height: 6px; } .budget-big { font-size: 20px; } }
 .field input.nav.focus, .field input.nav:focus-visible, .field input.nav:focus { background: #0d1318; color: var(--ink); border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+.team-badge { align-self: flex-start; font-family: var(--display); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 10px; border: 1px solid currentColor; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.team-badge.t0 { color: #8fd0ff; } .team-badge.t1 { color: #ffab8f; }
+.tr-team { font-style: normal; font-size: 10px; margin-left: 5px; padding: 0 4px; border: 1px solid currentColor; color: var(--ink-dim); letter-spacing: 0.06em; }
+.results-table tr.won td:first-child::before { content: '★ '; color: var(--amber); }
+.tracker { max-width: min(760px, 56vw); } .tr-side { padding: 4px 8px 5px; }
