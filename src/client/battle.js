@@ -146,6 +146,7 @@ export class Battle {
     this.ix = { mode: 'move', mechId: id, reach, moveMode: prevMode && reach[prevMode] ? prevMode : 'walk' };
     this.cursor = { x: m.x, y: m.y };
     this.r.setActive(id);
+    this.r.restoreZoom();
     this.r.focusMech(id);
     this.updateMoveOverlay();
     this.render();
@@ -275,7 +276,7 @@ export class Battle {
     ix.sel = sel;
     this.cursor = { x: t.x, y: t.y };
     this.r.setTargetLine(m.id, t.id, opts.length > 0);
-    this.r.focusHex(Math.round((m.x + t.x) / 2), Math.round((m.y + t.y) / 2));
+    this.r.frameMechs(m.id, t.id);
     this.updateCursorOverlay();
     if (!initial) sfx('ui-move');
     this.render();
@@ -343,6 +344,7 @@ export class Battle {
   onAction(a) {
     const ix = this.ix;
     if (a === 'menu') { this.app.pause(); return true; }
+    if (a === 'camcentre') { const id = ix.mechId ?? (this.state.act ? this.state.act.id : null); if (id !== null && id !== undefined) this.r.focusMech(id); else this.r.focusHex(this.cursor.x, this.cursor.y); return true; }
     switch (ix.mode) {
       case 'briefing':
         if (a === 'confirm' || a === 'back') { sfx('ui-ok'); if (this.r.busy) { this.ix = { mode: 'anim' }; this.render(); } else this.refresh(); }
@@ -506,8 +508,19 @@ export class Battle {
         <div class="goal">${esc(goalSide >= 0 ? st.sides[goalSide].goal : 'Spectating')}</div>
         ${itemTxt ? `<div class="clock">${itemTxt}</div>` : ''}</div>
       ${this.trackerHTML(limit)}
-      <div class="hud-right"><button class="help-btn" data-k="help" ${attr('Field manual', 'How turns, movement, aiming, heat and damage work. Shortcut: H, or Menu → How to play.')} aria-label="How to play">${ICON.help}</button><div class="feed"></div></div></div>`);
+      <div class="hud-right"><button class="help-btn" data-k="help" ${attr('Field manual', 'How turns, movement, aiming, heat and damage work. Shortcut: H, or Menu → How to play.')} aria-label="How to play">${ICON.help}</button><div class="camctl panel" ${attr('Camera', '<p>Rotate the battlefield and zoom.</p><p>Controller: right stick rotates and tilts, triggers zoom. Keyboard: Q / E rotate, + / − zoom. Mouse: right-drag or middle-drag to rotate, wheel to zoom. Touch: twist and pinch with two fingers.</p><p>The centre button jumps back to your active mech.</p>')}>
+        <button data-cam="l" aria-label="Rotate left">⟲</button><button data-cam="c" aria-label="Centre on mech">◎</button><button data-cam="r" aria-label="Rotate right">⟳</button>
+        <button data-cam="out" aria-label="Zoom out">−</button><button data-cam="in" aria-label="Zoom in">+</button></div>
+      <div class="feed"></div></div></div>`);
     $('[data-k=help]', top).addEventListener('click', () => this.app.showManual());
+    $$('[data-cam]', top).forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const k = b.dataset.cam;
+      if (k === 'l') this.r.rotateStep(-1); else if (k === 'r') this.r.rotateStep(1);
+      else if (k === 'in') this.r.zoomStep(-1); else if (k === 'out') this.r.zoomStep(1);
+      else { const id = this.ix.mechId ?? (this.state.act ? this.state.act.id : null); if (id !== null && id !== undefined) this.r.focusMech(id); }
+      sfx('ui-move');
+    }));
     root.appendChild(top);
     this.feedEl = $('.feed', top);
     this.renderFeed();

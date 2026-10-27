@@ -106,7 +106,7 @@ export class Renderer {
     const th = THEMES[map.theme] || THEMES.temperate;
     this.theme = th;
     this.scene.background = new THREE.Color(th.sky);
-    this.scene.fog = new THREE.Fog(th.fog, 28, 80);
+    this.scene.fog = new THREE.Fog(th.fog, 40, 110);
     this.hemi.color.set(th.hemi[0]); this.hemi.groundColor.set(th.hemi[1]);
     this.hemi.intensity = map.theme === 'lunar' ? 0.35 : 0.9;
     this.sun.color.set(th.sun);
@@ -475,9 +475,18 @@ export class Renderer {
   updateCamera(dt) {
     const c = this.cam;
     const speed = this.camSpeed || 1;
+    if (input.cam.x || input.cam.y) { c.wantYaw = null; c.wantPitch = null; }
     c.yaw += input.cam.x * dt * 2.2 * speed;
     c.pitch = Math.max(0.42, Math.min(1.35, c.pitch + input.cam.y * dt * 1.2 * speed));
-    if (input.zoom) { c.wantDist = Math.max(6, Math.min(34, c.wantDist + input.zoom * 1.2)); input.zoom = 0; }
+    if (c.wantYaw !== null && c.wantYaw !== undefined) {
+      const d = Math.atan2(Math.sin(c.wantYaw - c.yaw), Math.cos(c.wantYaw - c.yaw));
+      if (Math.abs(d) < 0.01) { c.yaw = c.wantYaw; c.wantYaw = null; } else c.yaw += d * Math.min(1, dt * 4.5);
+    }
+    if (c.wantPitch !== null && c.wantPitch !== undefined) {
+      c.pitch += (c.wantPitch - c.pitch) * Math.min(1, dt * 4);
+      if (Math.abs(c.wantPitch - c.pitch) < 0.01) { c.pitch = c.wantPitch; c.wantPitch = null; }
+    }
+    if (input.zoom) { c.userDist = null; c.wantDist = Math.max(6, Math.min(34, c.wantDist + input.zoom * 1.2)); input.zoom = 0; }
     c.dist += (c.wantDist - c.dist) * Math.min(1, dt * 8);
     if (this.bounds) {
       c.want.x = Math.max(this.bounds.x0, Math.min(this.bounds.x1, c.want.x));
@@ -487,6 +496,79 @@ export class Renderer {
     const off = new THREE.Vector3(Math.sin(c.yaw) * Math.cos(c.pitch), Math.sin(c.pitch), Math.cos(c.yaw) * Math.cos(c.pitch)).multiplyScalar(c.dist);
     this.camera.position.copy(c.target).add(off);
     this.camera.lookAt(c.target);
+  }
+
+  // Smooth 60° turns from the on-screen buttons
+  rotateStep(dir) {
+    const c = this.cam;
+    const base = c.wantYaw ?? c.yaw;
+    c.wantYaw = base + dir * Math.PI / 3;
+  }
+  restoreZoom() { const c = this.cam; if (c.userDist !== null && c.userDist !== undefined) { c.wantDist = c.userDist; c.userDist = null; } }
+  zoomStep(dir) { this.cam.userDist = null; this.cam.wantDist = Math.max(6, Math.min(34, this.cam.wantDist + dir * 3)); }
+  orbit(dx, dy) {
+    const c = this.cam;
+    c.wantYaw = null; c.wantPitch = null;
+    c.yaw -= dx * 0.006;
+    c.pitch = Math.max(0.42, Math.min(1.35, c.pitch + dy * 0.004));
+  }
+
+  // Swing the camera side-on to the line between two mechs and pull back until both are in frame.
+  frameMechs(idA, idB) {
+    const a = this.mechs.get(idA), b = this.mechs.get(idB);
+    if (!a || !b) return;
+    const pa = a.model.root.position, pb = b.model.root.position;
+    const c = this.cam;
+    c.want.set((pa.x + pb.x) / 2, (pa.y + pb.y) / 2, (pa.z + pb.z) / 2);
+    const dx = pb.x - pa.x, dz = pb.z - pa.z;
+    const sep = Math.hypot(dx, dz);
+    // camera offset direction is (sin yaw, cos yaw); perpendicular to the attack line
+    const line = Math.atan2(dx, dz);
+    const options = [line + Math.PI / 2, line - Math.PI / 2];
+    const near = (y) => Math.abs(Math.atan2(Math.sin(y - c.yaw), Math.cos(y - c.yaw)));
+    let yaw = options[0];
+    if (near(options[1]) < near(options[0])) yaw = options[1];
+    // only swing if the current view is looking too far along the line
+    const along = Math.abs(Math.cos(c.yaw - line));
+    if (along > 0.35 || sep > 3) c.wantYaw = c.yaw + Math.atan2(Math.sin(yaw - c.yaw), Math.cos(yaw - c.yaw));
+    const aspect = Math.max(0.6, this.camera.aspect);
+    const fit = (sep / 2 + 1.6) / Math.tan((this.camera.fov / 2) * Math.PI / 180) / Math.min(1, aspect) * 1.25;
+    if (c.userDist === null || c.userDist === undefined) c.userDist = c.wantDist;
+    c.wantDist = Math.max(c.wantDist, Math.min(60, Math.max(8, fit)));
+    if (c.pitch < 0.75) c.wantPitch = 0.8;
+    this.framed = idA + ':' + idB;
+  }
+
+  onScreen(id, margin = 40) {
+    const m = this.mechs.get(id);
+    if (!m) return true;
+    const rect = this.canvas.getBoundingClientRect();
+    const q = m.model.root.position.clone(); q.y += m.model.height * 0.6;
+    const s = this.project(q);
+    return !s.behind && s.x > rect.left + margin && s.x < rect.right - margin && s.y > rect.top + margin && s.y < rect.bottom - margin;
+  }
+  async settleFraming(a, b) {
+    const t0 = performance.now();
+    const settled = () => {
+      const c = this.cam;
+      return (c.wantYaw === null || c.wantYaw === undefined) && (c.wantPitch === null || c.wantPitch === undefined) &&
+        c.target.distanceTo(c.want) < 0.3 && Math.abs(c.dist - c.wantDist) < 0.4;
+    };
+    while (performance.now() - t0 < 900) {
+      await sleep(60);
+      if (settled() && this.onScreen(a) && this.onScreen(b)) return;
+    }
+    // Slow frame rate or still out of view: jump the camera straight to the framed position.
+    const c = this.cam;
+    for (let i = 0; i < 6; i++) {
+      if (c.wantYaw !== null && c.wantYaw !== undefined) { c.yaw = c.wantYaw; c.wantYaw = null; }
+      if (c.wantPitch !== null && c.wantPitch !== undefined) { c.pitch = c.wantPitch; c.wantPitch = null; }
+      c.target.copy(c.want); c.dist = c.wantDist;
+      this.updateCamera(0); this.camera.updateMatrixWorld();
+      if (this.onScreen(a) && this.onScreen(b)) return;
+      if (c.wantDist >= 60) return;
+      c.wantDist = Math.min(60, c.wantDist + 5);
+    }
   }
 
   // Screen-relative step: returns best neighbour direction for a stick/dpad vector (x right, y down)
@@ -677,6 +759,7 @@ export class Renderer {
   panOf(pos) { const s = this.project(pos); const r = this.canvas.getBoundingClientRect(); return Math.max(-0.8, Math.min(0.8, ((s.x - r.left) / r.width) * 2 - 1)); }
 
   async runEvents(events, state, onEvent) {
+    this.framed = null;
     const sp = this.speed || 1;
     const instant = sp >= 8;
     for (const e of events) {
@@ -684,10 +767,16 @@ export class Renderer {
       if (instant) continue;
       const v = e.id !== undefined ? this.mechs.get(e.id) : null;
       switch (e.k) {
-        case 'activate': if (v) this.focusMech(e.id); break;
+        case 'activate': if (v) { this.framed = null; this.restoreZoom(); this.focusMech(e.id); } break;
         case 'move': if (v) await this.animMove(v, e, sp); break;
-        case 'shot': if (v) await this.animShot(v, this.mechs.get(e.target), e, state, sp); break;
-        case 'melee': if (v) await this.animMelee(v, this.mechs.get(e.target), e, sp); break;
+        case 'shot': case 'melee': {
+          if (!v) break;
+          const key = e.id + ':' + e.target;
+          if (this.framed !== key || !this.onScreen(e.id) || !this.onScreen(e.target)) { this.frameMechs(e.id, e.target); await this.settleFraming(e.id, e.target); }
+          if (e.k === 'shot') await this.animShot(v, this.mechs.get(e.target), e, state, sp);
+          else await this.animMelee(v, this.mechs.get(e.target), e, sp);
+          break;
+        }
         case 'boom': if (v) { const p = this.bodyPoint(v, 0.2); this.explosion(p, 1.6); sfx('boom', { size: 1.3, pan: this.panOf(p) }); await sleep(400 / sp); } break;
         case 'locgone': if (v) { const p = this.bodyPoint(v); this.explosion(p, 0.8); this.spawn(p, { n: 16, color: '#ffe08a', size: 0.12, speed: 5, life: 0.5, gravity: 9, grow: 0 }); } break;
         case 'crit': if (v) { this.float(v, critShort(e.code), 'crit'); } break;

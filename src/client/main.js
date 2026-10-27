@@ -114,7 +114,7 @@ class App {
         if (touches.size === 2) {
           const [a, b] = [...touches.values()];
           const d = Math.hypot(a.x - b.x, a.y - b.y), ang = Math.atan2(b.y - a.y, b.x - a.x);
-          if (pinch) { this.renderer.cam.wantDist = Math.max(6, Math.min(34, this.renderer.cam.wantDist * pinch.d / d)); this.renderer.cam.yaw -= (ang - pinch.ang); }
+          if (pinch) { this.renderer.cam.wantDist = Math.max(6, Math.min(34, this.renderer.cam.wantDist * pinch.d / d)); this.renderer.cam.wantYaw = null; this.renderer.cam.yaw -= (ang - pinch.ang); }
           pinch = { d, ang };
         } else if (touches.size === 1 && prev && this.dragging) {
           const c = this.renderer.cam;
@@ -126,12 +126,13 @@ class App {
         }
         return;
       }
-      if (e.buttons & 4 || (e.buttons & 1 && e.altKey)) { this.renderer.cam.yaw -= e.movementX * 0.006; this.renderer.cam.pitch = Math.max(0.42, Math.min(1.35, this.renderer.cam.pitch + e.movementY * 0.004)); return; }
+      if (e.buttons & 2 && this.rDrag) { this.rDrag.moved += Math.abs(e.movementX) + Math.abs(e.movementY); }
+      if (e.buttons & 4 || e.buttons & 2 || (e.buttons & 1 && e.altKey)) { this.renderer.orbit(e.movementX, e.movementY); return; }
       if (this.screen === 'battle' && !this.modal) this.battle.pointer(e, 'move');
     });
     gl.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch') { touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); this.dragging = touches.size === 1; this.dragMoved = 0; if (touches.size === 2) pinch = null; return; }
-      if (e.button === 2) { e.preventDefault(); this.onAction('back'); }
+      if (e.button === 2) { e.preventDefault(); this.rDrag = { moved: 0 }; gl.setPointerCapture(e.pointerId); }
     });
     const up = (e) => {
       if (e.pointerType === 'touch') {
@@ -142,6 +143,7 @@ class App {
         this.dragging = false;
         return;
       }
+      if (e.button === 2 && this.rDrag) { const moved = this.rDrag.moved; this.rDrag = null; if (moved < 6) this.onAction('back'); return; }
       if (e.button === 0 && !e.altKey && this.screen === 'battle' && !this.modal) this.battle.pointer(e, 'click');
     };
     gl.addEventListener('pointerup', up);

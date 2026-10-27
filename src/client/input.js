@@ -31,7 +31,7 @@ export function glyphSet() {
 const KEYMAP = {
   ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   Enter: 'confirm', Space: 'confirm', NumpadEnter: 'confirm', Escape: 'back', Backspace: 'back',
-  KeyF: 'x', KeyR: 'y', KeyH: 'help', Tab: 'rb', KeyT: 'view', KeyP: 'menu', F10: 'menu',
+  KeyF: 'x', KeyR: 'y', KeyH: 'help', KeyC: 'camcentre', Tab: 'rb', KeyT: 'view', KeyP: 'menu', F10: 'menu',
 };
 const keysDown = new Set();
 window.addEventListener('keydown', (e) => {
@@ -57,7 +57,7 @@ window.addEventListener('keyup', (e) => keysDown.delete(e.code));
 window.addEventListener('blur', () => keysDown.clear());
 
 // ----------------------------------------------------------------- gamepads
-const BTN = ['confirm', 'back', 'x', 'y', 'lb', 'rb', 'lt', 'rt', 'view', 'menu', null, null, 'up', 'down', 'left', 'right'];
+const BTN = ['confirm', 'back', 'x', 'y', 'lb', 'rb', 'lt', 'rt', 'view', 'menu', null, 'camcentre', 'up', 'down', 'left', 'right'];
 const prev = new Map();
 const repeat = { dir: null, next: 0 };
 let nativePad = null; // filled by the Android shell

@@ -424,3 +424,10 @@ table.tt td { padding: 2px 8px 2px 0; vertical-align: top; } table.tt td:first-c
   #tip .mods-list li { font-size: 12px; }
 }
 @media (max-height: 520px) { .unit-card.target { max-height: calc(100% - 140px); } .unit-card:not(.target) .heatbar .lbl .faint:last-child { display: none; } }
+.camctl { display: grid; grid-template-columns: repeat(3, 38px); gap: 4px; padding: 6px; }
+.camctl button { height: 36px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.05); color: var(--ink); font-size: 19px; font-family: var(--display); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.camctl button:hover, .camctl button:focus-visible { background: var(--amber); color: #1a1206; outline: none; }
+.camctl button:active { transform: scale(0.94); }
+.camctl button[data-cam="out"] { grid-column: 1; } .camctl button[data-cam="in"] { grid-column: 3; }
+@media (max-height: 520px) { .camctl { grid-template-columns: repeat(5, 30px); padding: 3px; gap: 3px; } .camctl button { height: 30px; font-size: 16px; } .camctl button[data-cam="out"], .camctl button[data-cam="in"] { grid-column: auto; } }
+@media (max-width: 760px) { .hud-right .feed { display: none; } }

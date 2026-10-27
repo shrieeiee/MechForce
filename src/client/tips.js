@@ -223,6 +223,7 @@ export const MANUAL = [
   { k: 'basics', t: 'Basics', body: `
     <p>You command a <b>lance</b> of up to four BattleMechs. Each mission has an objective (top left of the screen); usually that means wrecking the enemy, but some missions are about crossing the map, grabbing an item, or simply surviving.</p>
     <p>Everything happens on a hex grid. Hexes have terrain and height, which affect how far you can move, what you can see, and how hard you are to hit.</p>
+    <p>Rotate the battlefield any time with the ⟲ ⟳ buttons (top right), the right stick, Q/E, right-dragging with the mouse, or twisting two fingers. During attacks the camera swings round automatically so you can see both the attacker and the target.</p>
     <p>On your turn the bar at the bottom shows the current step and what each button does. Hover, focus or long-press almost anything for an explanation.</p>` },
   { k: 'turns', t: 'Turn order', body: `
     <p>Each round, every force rolls two dice for <b>initiative</b>. The lowest roll moves first; the highest goes last and gets to react.</p>
@@ -257,7 +258,7 @@ export const MANUAL = [
     <tr><td>Stay & turn · Fire</td><td>X / □ · F</td></tr>
     <tr><td>Next mech / target</td><td>LB RB · Tab</td></tr>
     <tr><td>End this mech's turn</td><td>View · T</td></tr>
-    <tr><td>Camera</td><td>Right stick, triggers · Q/E, wheel, middle-drag · two fingers</td></tr>
+    <tr><td>Rotate / tilt camera</td><td>Right stick · Q/E · right- or middle-drag · two-finger twist · ⟲ ⟳ buttons</td></tr><tr><td>Zoom</td><td>Triggers · + / − · mouse wheel · pinch · − + buttons</td></tr><tr><td>Centre on your mech</td><td>Click right stick · C · ◎ button</td></tr>
     <tr><td>Field manual</td><td>Menu → How to play · H · the ? button</td></tr></table>` },
 ];
 
