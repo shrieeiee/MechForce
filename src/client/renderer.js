@@ -875,7 +875,8 @@ export class Renderer {
     v.model.torso.rotation.y = v.wantYaw;
     const W = WEAPONS[e.wt];
     const w = state.mechs[e.id].weapons[e.w];
-    const from = this.muzzleWorld(v, w ? w.loc : 2);
+    const wm = w && v.model.weaponMounts && v.model.weaponMounts[w.i];
+    const from = wm ? wm.muzzle.getWorldPosition(new THREE.Vector3()) : this.muzzleWorld(v, w ? w.loc : 2);
     const to = e.hit ? this.bodyPoint(t) : this.bodyPoint(t, 2.2).setY(t.model.root.position.y + Math.random() * 0.4);
     const pan = this.panOf(from);
     const impact = (p, big = 0.5) => {

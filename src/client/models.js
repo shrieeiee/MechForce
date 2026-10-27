@@ -18,6 +18,62 @@ function cyl(r1, r2, h, s = 8) {
 
 function hashStr(s) { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h); }
 
+function glowMat(c, k = 1.6) { return new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.3, metalness: 0.1 }); }
+
+export function weaponSize(t) { return [3, 5, 7, 9, 1, 3, 5, 7, 9, 2, 3, 4, 1, 2, 4, 2, 6][t] || 1; }
+
+// One visible part per weapon, built along +Z with its muzzle at the far end.
+export function weaponPart(t, s, mats) {
+  const g = new THREE.Group();
+  const W = WEAPONS[t];
+  const along = (geo, mat, z0, len) => { const m = new THREE.Mesh(geo, mat); m.rotation.x = Math.PI / 2; m.position.z = z0 + len / 2; g.add(m); return m; };
+  let len = 0.2 * s;
+  if (W.kind === 'm') {
+    const n = W.n, lrm = !!W.lrm;
+    const cols = n <= 2 ? 2 : n <= 6 ? 3 : n <= 10 ? 4 : 5, rows = Math.ceil(Math.min(n, 20) / cols);
+    const cw = 0.045 * s, w = cols * cw + 0.03 * s, h = rows * cw + 0.03 * s, d = (lrm ? 0.24 : 0.16) * s;
+    const housing = new THREE.Mesh(box(w, h, d), mats.trim); housing.position.z = d / 2 - 0.02 * s; g.add(housing);
+    const face = new THREE.Mesh(box(w * 0.92, h * 0.88, 0.012 * s), mats.dark); face.position.z = d - 0.015 * s; g.add(face);
+    const tubeGeo = cyl(cw * 0.32, cw * 0.32, 0.01 * s, 6);
+    for (let k = 0; k < Math.min(n, rows * cols); k++) {
+      const tube = new THREE.Mesh(tubeGeo, mats.tube);
+      tube.rotation.x = Math.PI / 2;
+      tube.position.set(((k % cols) - (cols - 1) / 2) * cw, (Math.floor(k / cols) - (rows - 1) / 2) * cw, d - 0.006 * s);
+      g.add(tube);
+    }
+    len = d;
+  } else if (t <= 3) { // autocannons
+    const r = [0.022, 0.03, 0.042, 0.06][t] * s, l = [0.62, 0.5, 0.45, 0.34][t] * s;
+    along(cyl(r * 1.6, r * 1.6, 0.1 * s, 10), mats.joint, 0, 0.1 * s);
+    along(cyl(r, r * 1.1, l, 10), mats.barrel, 0.08 * s, l);
+    if (t >= 2) { const brake = new THREE.Mesh(box(r * 3, r * 2.4, 0.06 * s), mats.barrel); brake.position.z = 0.08 * s + l; g.add(brake); }
+    len = 0.08 * s + l + (t >= 2 ? 0.03 * s : 0);
+  } else if (t === 4) { // machine gun: twin barrels
+    for (const dx of [-1, 1]) { const b = along(cyl(0.012 * s, 0.012 * s, 0.2 * s, 6), mats.barrel, 0, 0.2 * s); b.position.x = dx * 0.018 * s; }
+    const body = new THREE.Mesh(box(0.07 * s, 0.05 * s, 0.08 * s), mats.joint); body.position.z = 0.02 * s; g.add(body);
+    len = 0.2 * s;
+  } else if (t >= 12 && t <= 14) { // lasers
+    const k = t - 12;
+    const r = [0.022, 0.03, 0.04][k] * s, l = [0.16, 0.24, 0.36][k] * s;
+    along(cyl(r * 1.5, r * 1.7, l * 0.4, 8), mats.joint, 0, l * 0.4);
+    along(cyl(r, r, l, 8), mats.barrel, l * 0.2, l);
+    along(cyl(r * 0.75, r * 0.75, 0.025 * s, 10), [mats.lensS, mats.lensM, mats.lensL][k], l * 1.2, 0.025 * s);
+    len = l * 1.2 + 0.025 * s;
+  } else if (t === 15) { // flamer
+    along(cyl(0.03 * s, 0.05 * s, 0.14 * s, 8), mats.joint, 0, 0.14 * s);
+    along(cyl(0.045 * s, 0.03 * s, 0.05 * s, 8), mats.flame, 0.14 * s, 0.05 * s);
+    len = 0.19 * s;
+  } else { // plasma cannon
+    const l = 0.46 * s;
+    along(cyl(0.035 * s, 0.045 * s, l, 10), mats.barrel, 0, l);
+    for (let k = 0; k < 3; k++) along(cyl(0.06 * s, 0.06 * s, 0.03 * s, 10), mats.trim, l * (0.25 + k * 0.22), 0.03 * s);
+    along(cyl(0.028 * s, 0.028 * s, 0.03 * s, 10), mats.lensB, l, 0.03 * s);
+    len = l + 0.03 * s;
+  }
+  const mz = new THREE.Object3D(); mz.position.z = len + 0.02 * s; g.add(mz);
+  return { g, mz, len };
+}
+
 export function mechMaterials(colorHex) {
   const base = new THREE.Color(colorHex);
   const body = base.clone().lerp(new THREE.Color('#9aa3ad'), 0.45);
@@ -28,6 +84,7 @@ export function mechMaterials(colorHex) {
     joint: new THREE.MeshStandardMaterial({ color: '#4b535c', metalness: 0.8, roughness: 0.35 }),
     glass: new THREE.MeshStandardMaterial({ color: '#0b1a22', metalness: 0.2, roughness: 0.1, emissive: new THREE.Color('#58d6ff'), emissiveIntensity: 1.1 }),
     barrel: new THREE.MeshStandardMaterial({ color: '#1d2125', metalness: 0.85, roughness: 0.3 }),
+    lensS: glowMat('#ff8a3c'), lensM: glowMat('#ff4d9a'), lensL: glowMat('#ff3b5c'), lensB: glowMat('#7fc8ff'), flame: glowMat('#ffb02e'), tube: glowMat('#3a1a0a', 0.4),
   };
 }
 
@@ -47,7 +104,7 @@ export function buildMech(spec, colorHex) {
   const torsoH = (0.42 + cls * 0.04) * s;
   const torsoD = (0.42 + (h % 3) * 0.04) * s;
   const hipY = legLen * 1.9;
-  const birdLeg = (h % 4 === 0) || cls === 0 && h % 2 === 0;
+  const birdLeg = cls <= 1 && (h % 4 === 0 || (cls === 0 && h % 2 === 0));
 
   // legs
   const legs = [];
@@ -126,32 +183,50 @@ export function buildMech(spec, colorHex) {
   }
 
   const muzzles = {};
-  // missile pods on the shoulders if carrying missiles
-  const missiles = [...types].filter((t) => WEAPONS[t].kind === 'm');
-  if (missiles.length) {
-    const lrm = missiles.some((t) => WEAPONS[t].lrm);
-    for (const side of [-1, 1]) {
-      const podW = (lrm ? 0.24 : 0.18) * s;
-      const pod = new THREE.Mesh(box(podW, 0.2 * s, 0.3 * s), mats.trim);
-      pod.position.set(side * torsoW * 0.36, torsoH + 0.08 * s, -0.02 * s);
-      torso.add(pod);
-      const face = new THREE.Mesh(box(podW * 0.86, 0.16 * s, 0.02 * s), mats.dark);
-      face.position.set(side * torsoW * 0.36, torsoH + 0.08 * s, 0.14 * s);
-      torso.add(face);
-      const mz = new THREE.Object3D(); mz.position.set(side * torsoW * 0.36, torsoH + 0.1 * s, 0.18 * s);
-      torso.add(mz);
-      muzzles[side < 0 ? 1 : 3] = mz;
+  const weaponMounts = {};
+  const byLoc = (loc) => spec.weapons.filter((w) => w.loc === loc);
+  const mount = (w, parent, pos, alongDown) => {
+    const part = weaponPart(w.t, s, mats);
+    if (alongDown) part.g.rotation.x = Math.PI / 2; // build axis +Z -> arm axis -Y
+    part.g.position.copy(pos);
+    parent.add(part.g);
+    const meshes = [];
+    part.g.traverse((o) => { if (o.isMesh) meshes.push(o); });
+    weaponMounts[w.i] = { muzzle: part.mz, meshes, group: part.g };
+    if (!muzzles[w.loc]) muzzles[w.loc] = part.mz;
+  };
+  // side torsos: missile racks ride on the shoulders, guns poke out of the front
+  for (const [side, loc] of [[-1, 1], [1, 3]]) {
+    const ws = byLoc(loc);
+    let mi = 0, gi = 0;
+    for (const w of ws) {
+      if (WEAPONS[w.t].kind === 'm') {
+        const x = side * (torsoW * 0.3 + (mi % 2) * 0.13 * s), z = -0.12 * s + Math.floor(mi / 2) * 0.0;
+        mount(w, torso, new THREE.Vector3(x, torsoH + 0.04 * s + Math.floor(mi / 2) * 0.17 * s, z), false);
+        mi++;
+      } else {
+        const x = side * (torsoW * 0.3 + (gi % 2) * 0.09 * s), y = torsoH * (0.7 - Math.floor(gi / 2) * 0.28);
+        mount(w, torso, new THREE.Vector3(x, y, torsoD / 2 * 0.92), false);
+        gi++;
+      }
     }
   }
-  // torso-mounted guns (CT/H)
-  const ctM = new THREE.Object3D(); ctM.position.set(0, torsoH * 0.55, torsoD / 2 + 0.06 * s); torso.add(ctM); muzzles[2] = muzzles[2] || ctM;
-  const hM = new THREE.Object3D(); hM.position.set(0, torsoH + 0.12 * s, torsoD * 0.3); torso.add(hM); muzzles[0] = hM;
-  if (!muzzles[1]) { const m = new THREE.Object3D(); m.position.set(-torsoW * 0.37, torsoH * 0.5, torsoD / 2 + 0.03); torso.add(m); muzzles[1] = m; }
-  if (!muzzles[3]) { const m = new THREE.Object3D(); m.position.set(torsoW * 0.37, torsoH * 0.5, torsoD / 2 + 0.03); torso.add(m); muzzles[3] = m; }
+  // center torso: a row of chest guns (missiles get a chest launcher)
+  byLoc(2).forEach((w, k) => {
+    const n = byLoc(2).length;
+    const x = (k - (n - 1) / 2) * 0.09 * s;
+    mount(w, torso, new THREE.Vector3(x, torsoH * (WEAPONS[w.t].kind === 'm' ? 0.3 : 0.42), torsoD / 2 + 0.02 * s), false);
+  });
+  // head-mounted
+  byLoc(0).forEach((w, k) => mount(w, head, new THREE.Vector3((k - 0.5) * 0.07 * s + (byLoc(0).length === 1 ? 0.035 * s : 0), 0.04 * s, 0.12 * s), false));
+  // legs (rare): fire from the thigh
+  for (const [loc, li] of [[6, 0], [7, 1]]) byLoc(loc).forEach((w, k) => mount(w, legs[li].hip, new THREE.Vector3(0, -0.2 * s - k * 0.12 * s, 0.12 * s), false));
+  if (!muzzles[2]) { const m = new THREE.Object3D(); m.position.set(0, torsoH * 0.55, torsoD / 2 + 0.06 * s); torso.add(m); muzzles[2] = m; }
+  if (!muzzles[0]) { const m = new THREE.Object3D(); m.position.set(0, torsoH + 0.12 * s, torsoD * 0.3); torso.add(m); muzzles[0] = m; }
 
-  // arms
+  // arms: every arm weapon is clustered around the forearm
   const arms = [];
-  const armLoc = { 4: spec.weapons.filter((w) => w.loc === 4), 5: spec.weapons.filter((w) => w.loc === 5) };
+  const ARM_SLOTS = [[0, 0], [-0.075, 0.07], [0.075, 0.07], [0, 0.13], [-0.075, -0.06], [0.075, -0.06]];
   for (const [side, loc] of [[-1, 4], [1, 5]]) {
     const sh = new THREE.Group();
     sh.position.set(side * (torsoW * 0.52 + 0.06 * s), torsoH * 0.78, 0);
@@ -166,38 +241,23 @@ export function buildMech(spec, colorHex) {
     const fore = new THREE.Mesh(box(0.15 * s, 0.34 * s, 0.17 * s), mats.dark);
     fore.position.y = -0.15 * s;
     elbow.add(fore);
-    const ws = armLoc[loc];
-    const big = ws.find((w) => [2, 3, 14, 16, 0, 1].includes(w.t));
-    const mz = new THREE.Object3D();
-    if (big) {
-      const len = ([0, 2].includes(big.t) ? 0.62 : big.t === 3 ? 0.4 : 0.5) * s;
-      const rad = (big.t === 3 ? 0.07 : big.t === 16 ? 0.06 : 0.04) * s;
-      const barrel = new THREE.Mesh(cyl(rad, rad * 1.2, len, 10), mats.barrel);
-      barrel.position.y = -0.3 * s - len / 2;
-      elbow.add(barrel);
-      if (big.t === 16) { const ring = new THREE.Mesh(cyl(rad * 1.8, rad * 1.8, 0.05 * s, 10), mats.trim); ring.position.y = -0.3 * s - len * 0.7; elbow.add(ring); }
-      mz.position.y = -0.3 * s - len;
-    } else if (ws.length) {
-      for (let i = 0; i < Math.min(2, ws.length); i++) {
-        const b = new THREE.Mesh(cyl(0.022 * s, 0.022 * s, 0.26 * s, 6), mats.barrel);
-        b.position.set((i - 0.5) * 0.06 * s, -0.42 * s, 0.03 * s);
-        elbow.add(b);
-      }
-      mz.position.y = -0.56 * s;
-    } else {
+    const ws = byLoc(loc).slice().sort((a, b) => weaponSize(b.t) - weaponSize(a.t));
+    if (!ws.length) {
       const hand = new THREE.Mesh(box(0.14 * s, 0.14 * s, 0.12 * s), mats.joint);
       hand.position.y = -0.38 * s;
       elbow.add(hand);
-      mz.position.y = -0.4 * s;
     }
-    elbow.add(mz);
-    muzzles[loc] = mz;
+    ws.forEach((w, k) => {
+      const [dx, dz] = ARM_SLOTS[k % ARM_SLOTS.length];
+      mount(w, elbow, new THREE.Vector3(dx * s * side, -0.3 * s, dz * s), true);
+    });
+    if (!muzzles[loc]) { const mz = new THREE.Object3D(); mz.position.y = -0.4 * s; elbow.add(mz); muzzles[loc] = mz; }
     arms.push({ sh, elbow, side, loc });
   }
 
   root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   const height = hipY + torsoH + 0.3 * s;
-  return { root, body, torso, head, legs, arms, muzzles, jets, mats, height, scale: s };
+  return { root, body, torso, head, legs, arms, muzzles, weaponMounts, jets, mats, height, scale: s };
 }
 
 // Items and props

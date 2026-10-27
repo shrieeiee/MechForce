@@ -9,7 +9,8 @@ import { Battle } from './battle.js';
 import { input, pollInput, glyph } from './input.js';
 import { initAudio, sfx, music, audioSettings, applyVolumes } from './audio.js';
 import { $, $$, html, esc, FocusNav, promptBar, toast, paperDoll, glyphHTML } from './ui.js';
-import { initTips, tipSettings, hideTip, MANUAL } from './tips.js';
+import { initTips, tipSettings, hideTip, MANUAL, attr as tipAttr, weaponBlurb, ARMOR_TIP } from './tips.js';
+import { MechPreview } from './preview.js';
 import { ICON } from './icons.js';
 import { LocalSession, RemoteSession, wsUrlFor } from './net.js';
 import { native, isCapacitor, servedByHost, secureBrowser, platformName, canHost, canQuit, discover } from './platform.js';
@@ -465,20 +466,45 @@ class App {
       else if (prevScreen === 'lobby') this.showLobby();
       else this.showTitle();
     };
-    const detail = (m) => {
+    const color = edit && this.lobby ? this.lobby.slots[edit.side].color : '#d9a441';
+    const info = (m) => {
       if (!m) return '<div class="faint">Select a mech</div>';
-      const arm = m.a.reduce((a, b) => a + b, 0);
-      const W = m.wp.map((w) => `<tr><td>${esc(WEAPONS[w[0]].name)}</td><td class="num">${w[2]}${WEAPONS[w[0]].n > 1 ? '×' + WEAPONS[w[0]].n : ''}</td><td class="num">${w[1]}</td><td class="num">${w[4] ? w[4] + '–' : ''}${w[3]}</td><td>${['HD', 'LT', 'CT', 'RT', 'LA', 'RA', 'LL', 'RL'][w[7]]}</td><td class="num">${WEAPONS[w[0]].kind === 'e' ? '—' : w[6]}</td></tr>`).join('');
-      return `<div class="doll">${paperDoll(m, { max: true })}</div>
-        <div class="stack" style="min-width:0"><div><div class="eyebrow">${CLASS_NAMES[m.c]} · ${m.t} tons</div><h2>${esc(m.n)}</h2></div>
-        <div class="stat-grid">
-          <div class="stat"><div class="k">Walk/Run</div><div class="v">${m.w}/${Math.ceil(m.w * 1.5)}</div></div>
-          <div class="stat"><div class="k">Jump</div><div class="v">${m.j || '—'}</div></div>
-          <div class="stat"><div class="k">Armor</div><div class="v">${arm}</div></div>
-          <div class="stat"><div class="k">Heat sinks</div><div class="v">${m.hs}</div></div>
-          <div class="stat"><div class="k">Rating</div><div class="v">${mechBV(m)}</div></div>
-        </div>
-        <div style="overflow-x:auto"><table class="wtable"><tr><th>Weapon</th><th>Dmg</th><th>Heat</th><th>Range</th><th>Loc</th><th>Ammo</th></tr>${W}</table></div></div>`;
+      const arm = m.a.reduce((x, y) => x + y, 0);
+      const LOCN = ['Head', 'L.torso', 'C.torso', 'R.torso', 'L.arm', 'R.arm', 'L.leg', 'R.leg'];
+      const rows = m.wp.map((w, i) => `<tr class="wr" data-wi="${i}" ${tipAttr(WEAPONS[w[0]].name, `<p>${esc(weaponBlurb(w[0]))}</p><p>Hover or tap to see it fire on the model.</p>`)}><td><span class="wdot"></span>${esc(WEAPONS[w[0]].name)}</td><td class="num">${w[2]}${WEAPONS[w[0]].n > 1 ? '×' + WEAPONS[w[0]].n : ''}</td><td class="num">${w[1]}</td><td class="num">${w[4] ? w[4] + '–' : ''}${w[3]}</td><td>${LOCN[w[7]]}</td><td class="num">${WEAPONS[w[0]].kind === 'e' ? '—' : w[6]}</td></tr>`).join('');
+      return `<div class="bay-stats">
+          <div class="doll" ${tipAttr('Armour layout', ARMOR_TIP)}>${paperDoll(m, { max: true })}</div>
+          <div class="stat-grid">
+            <div class="stat" ${tipAttr('Movement', 'Hexes per turn walking / running (movement points; terrain costs more).')}><div class="k">Walk/Run</div><div class="v">${m.w}/${Math.ceil(m.w * 1.5)}</div></div>
+            <div class="stat" ${tipAttr('Jump jets', 'How far it can jump, ignoring terrain. A dash means no jump jets.')}><div class="k">Jump</div><div class="v">${m.j || '—'}</div></div>
+            <div class="stat" ${tipAttr('Armour', 'Total armour points across all 11 zones.')}><div class="k">Armor</div><div class="v">${arm}</div></div>
+            <div class="stat" ${tipAttr('Heat sinks', 'Heat removed at the end of each activation. More sinks means you can fire more weapons without overheating.')}><div class="k">Heat sinks</div><div class="v">${m.hs}</div></div>
+            <div class="stat" ${tipAttr('Rating', 'A rough overall strength score combining armour, firepower and speed. Useful for comparing designs.')}><div class="k">Rating</div><div class="v">${mechBV(m)}</div></div>
+          </div></div>
+        <div style="overflow-x:auto"><table class="wtable"><tr><th>Weapon</th><th>Dmg</th><th>Heat</th><th>Range</th><th>Mount</th><th>Ammo</th></tr>${rows}</table></div>`;
+    };
+    const showMech = (m) => {
+      const det = $('.detail', this.ui);
+      if (!det || !m) return;
+      $('.vname', det).innerHTML = `<div class="eyebrow">${CLASS_NAMES[m.c]} · ${m.t} tons</div><h2>${esc(m.n)}</h2>`;
+      $('.vjump', det).classList.toggle('hidden', !m.j);
+      $('.info', det).innerHTML = info(m);
+      const pv = this.preview;
+      pv.show(m, color);
+      pv.onFire = (i) => { $$('.wr', det).forEach((r) => r.classList.toggle('firing', +r.dataset.wi === i)); };
+      let lastHover = 0;
+      $$('.wr', det).forEach((r) => {
+        const i = +r.dataset.wi;
+        r.addEventListener('pointerenter', (e) => { if (e.pointerType !== 'mouse') return; pv.autoDemo = false; pv.setHighlight(i); if (performance.now() - lastHover > 350) { lastHover = performance.now(); pv.fire(i, true); } });
+        r.addEventListener('pointerleave', () => { pv.autoDemo = true; pv.demoT = 1.5; });
+        r.addEventListener('click', () => { pv.autoDemo = false; pv.setHighlight(i); pv.fire(i, true); clearTimeout(this.demoResume); this.demoResume = setTimeout(() => { pv.autoDemo = true; }, 2500); });
+      });
+    };
+    const salvo = () => {
+      const pv = this.preview; if (!pv.weapons) return;
+      pv.autoDemo = false;
+      pv.weapons.forEach((w, k) => setTimeout(() => { pv.setHighlight(k); pv.fire(k, true); }, k * 170));
+      clearTimeout(this.demoResume); this.demoResume = setTimeout(() => { pv.autoDemo = true; }, pv.weapons.length * 170 + 1800);
     };
     const render = () => {
       const mechs = list();
@@ -488,7 +514,11 @@ class App {
           <div class="tabs">${CLASS_NAMES.map((c, i) => `<div class="tab ${i === st.cls ? 'on' : ''}" data-c="${i}">${c} ${MECHS.filter((m) => m.c === i).length}</div>`).join('')}</div></div>
         ${edit ? `<div class="lance-tray"><span class="eyebrow">Lance</span>${edit.lance.map((n, i) => `<span class="chip">${esc(n)}</span>`).join('') || '<span class="faint">Empty — add up to ' + edit.max + '</span>'}
           <span class="num ${tons > edit.limit ? '' : 'dim'}" style="margin-left:auto;${tons > edit.limit ? 'color:var(--red)' : ''}">${tons} / ${edit.limit}t</span></div>` : ''}
-        <div class="screen-body bay"><div class="panel scroll list"></div><div class="panel detail scroll"></div></div></div>`);
+        <div class="screen-body bay"><div class="panel scroll list"></div><div class="panel detail scroll">
+          <div class="viewer"><div class="vname"></div>
+            <div class="vbtns"><button class="vb" data-v="walk">${ICON.walk} Walk</button><button class="vb vjump" data-v="jump">${ICON.jump} Jump</button><button class="vb" data-v="fire">${ICON.target} Fire all</button></div>
+            <div class="vhint">Drag to rotate · tap to pause spin</div></div>
+          <div class="info"></div></div></div></div>`);
       $$('.tab', el).forEach((t) => t.addEventListener('click', () => { st.cls = +t.dataset.c; render(); }));
       const lst = $('.list', el);
       for (const m of mechs) {
@@ -497,9 +527,12 @@ class App {
         row.addEventListener('click', () => { if (edit) add(m); });
         lst.appendChild(row);
       }
-      this.mount(el, edit ? [{ a: 'confirm', label: 'Add' }, { a: 'x', label: 'Remove last' }, { a: 'y', label: 'Random lance' }, { a: 'rb', label: 'Class' }, { a: 'back', label: 'Done' }]
-        : [{ a: 'rb', label: 'Weight class' }, { a: 'back', label: 'Back' }]);
-      this.nav.onChange = (row) => { st.focus = row ? row.dataset.key : null; const m = MECHS.find((x) => x.n === st.focus); $('.detail', this.ui).innerHTML = detail(m); };
+      this.mount(el, edit ? [{ a: 'confirm', label: 'Add' }, { a: 'x', label: 'Remove last' }, { a: 'y', label: 'Random lance' }, { a: 'view', label: 'Fire all' }, { a: 'rb', label: 'Class' }, { a: 'back', label: 'Done' }]
+        : [{ a: 'x', label: 'Fire all' }, { a: 'y', label: 'Walk / jump' }, { a: 'rb', label: 'Weight class' }, { a: 'back', label: 'Back' }]);
+      if (!this.preview) this.preview = new MechPreview();
+      this.preview.attach($('.viewer', el));
+      $$('.vb', el).forEach((bt) => bt.addEventListener('click', (e) => { e.stopPropagation(); const v = bt.dataset.v; if (v === 'fire') salvo(); else this.preview.setMode(v); sfx('ui-move'); }));
+      this.nav.onChange = (row) => { const key = row ? row.dataset.key : null; if (key === st.focus && this.preview.tpl && this.preview.tpl.n === key) return; st.focus = key; showMech(MECHS.find((x) => x.n === st.focus)); };
       if (st.focus) { const r = $$('.mech-row', el).find((x) => x.dataset.key === st.focus); if (r) this.nav.set(r, false); }
       this.nav.onChange(this.nav.cur);
     };
@@ -510,6 +543,8 @@ class App {
     };
     const act = (a) => {
       if (a === 'lb' || a === 'rb') { st.cls = (st.cls + (a === 'rb' ? 1 : 3)) % 4; st.focus = null; sfx('ui-move'); render(); return true; }
+      if (a === 'view' || (!edit && a === 'x')) { salvo(); return true; }
+      if (!edit && a === 'y') { this.preview.setMode(this.preview.mode === 'walk' && this.preview.tpl.j ? 'jump' : 'walk'); return true; }
       if (!edit) return false;
       if (a === 'x') { edit.lance.pop(); sfx('ui-back'); render(); return true; }
       if (a === 'y') { edit.lance = autoLance(Math.random(), edit.limit, edit.max); sfx('ui-ok'); render(); return true; }

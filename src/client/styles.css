@@ -431,3 +431,25 @@ table.tt td { padding: 2px 8px 2px 0; vertical-align: top; } table.tt td:first-c
 .camctl button[data-cam="out"] { grid-column: 1; } .camctl button[data-cam="in"] { grid-column: 3; }
 @media (max-height: 520px) { .camctl { grid-template-columns: repeat(5, 30px); padding: 3px; gap: 3px; } .camctl button { height: 30px; font-size: 16px; } .camctl button[data-cam="out"], .camctl button[data-cam="in"] { grid-column: auto; } }
 @media (max-width: 760px) { .hud-right .feed { display: none; } }
+
+/* ---------- Mech Bay 3D viewer ---------- */
+.bay .detail { display: flex; flex-direction: column; gap: 12px; padding: 0; }
+.viewer { position: relative; flex: none; height: min(46vh, 420px); min-height: 220px; background: radial-gradient(ellipse at 50% 70%, rgba(255, 178, 62, 0.12), transparent 60%), radial-gradient(ellipse at 50% 30%, #1c2833, #0d1217 75%); border-bottom: 1px solid var(--line); overflow: hidden; }
+.viewer::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 4px); pointer-events: none; }
+.preview-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.preview-canvas:active { cursor: grabbing; }
+.vname { position: absolute; left: 16px; top: 12px; z-index: 1; pointer-events: none; text-shadow: 0 2px 8px #000; }
+.vname h2 { font-size: 30px; }
+.vbtns { position: absolute; right: 12px; top: 12px; z-index: 1; display: flex; flex-direction: column; gap: 6px; }
+.vb { display: inline-flex; gap: 6px; align-items: center; padding: 6px 12px; background: rgba(10, 14, 18, 0.75); border: 1px solid var(--line); color: var(--ink); font-family: var(--display); font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
+.vb:hover, .vb:focus-visible { background: var(--amber); color: #1a1206; outline: none; }
+.vhint { position: absolute; left: 16px; bottom: 10px; z-index: 1; font-size: 13px; color: var(--ink-faint); pointer-events: none; }
+.info { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 16px; min-width: 0; }
+.bay-stats { display: grid; grid-template-columns: 120px 1fr; gap: 14px; align-items: start; }
+.wtable tr.wr { cursor: pointer; transition: background 0.15s; }
+.wtable tr.wr:hover { background: rgba(255, 178, 62, 0.1); }
+.wtable tr.wr.firing { background: rgba(255, 178, 62, 0.22); }
+.wtable .wdot { display: inline-block; width: 7px; height: 7px; margin-right: 8px; transform: rotate(45deg); background: rgba(255, 255, 255, 0.15); }
+.wtable tr.firing .wdot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+@media (max-width: 760px) { .bay .detail { max-height: none; } .viewer { height: 34vh; } .bay-stats { grid-template-columns: 1fr; } .bay-stats .doll { display: none; } }
+@media (max-height: 520px) { .viewer { height: 52vh; min-height: 160px; } .vname h2 { font-size: 20px; } .vb { padding: 4px 8px; font-size: 11px; } .vhint { display: none; } }
