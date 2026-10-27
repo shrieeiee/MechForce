@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { center, DIR_ANGLE, toAxial, fromAxial, neighbor } from '../core/hex.js';
 import { WEAPONS, TERRAIN } from '../core/data.js';
 import { totalArmor, maxArmor, operational } from '../core/rules.js';
-import { buildMech, buildItem } from './models.js';
+import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims } from './models.js';
 import { sfx } from './audio.js';
 import { input } from './input.js';
 
@@ -710,6 +710,7 @@ export class Renderer {
       const m = v.state;
       if (!m) continue;
       v.ring.material.opacity = v.active ? 0.55 + pulse * 0.45 : v.hl ? 0.9 : 0.5;
+      if (!m.dead) { tickWeaponAnims(v.model, dt, this.time); v.model.mats.vent.emissiveIntensity = 0.2 + Math.min(1, m.heat / 20) * 2.2 + (m.heat >= 14 ? Math.sin(this.time * 8) * 0.4 : 0); }
       v.ring.scale.setScalar(v.active ? 1 + pulse * 0.08 : 1);
       // idle sway & torso tracking
       if (!v.animating && !m.dead && !v.prone) {
@@ -876,6 +877,7 @@ export class Renderer {
     const W = WEAPONS[e.wt];
     const w = state.mechs[e.id].weapons[e.w];
     const wm = w && v.model.weaponMounts && v.model.weaponMounts[w.i];
+    if (wm) { triggerWeaponAnim(wm); if (wm.anim && wm.anim.charge) await sleep(260 / sp); }
     const from = wm ? wm.muzzle.getWorldPosition(new THREE.Vector3()) : this.muzzleWorld(v, w ? w.loc : 2);
     const to = e.hit ? this.bodyPoint(t) : this.bodyPoint(t, 2.2).setY(t.model.root.position.y + Math.random() * 0.4);
     const pan = this.panOf(from);

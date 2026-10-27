@@ -3,7 +3,7 @@ const OUT = process.env.OUT;
 (async () => {
   const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
-  await ctx.addInitScript(() => localStorage.setItem('mechforce.settings', JSON.stringify({ quality: 'high', speed: 1.5 })));
+  await ctx.addInitScript(() => localStorage.setItem('mechforce.settings', JSON.stringify({ quality: 'low', speed: 3 })));
   const p = await ctx.newPage(); const errs = []; p.on('pageerror', (e) => errs.push(e.message + ' ' + e.stack)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
   await p.goto('file://' + process.cwd() + '/dist/web/index.html');
   await p.waitForTimeout(2000);

@@ -1,6 +1,6 @@
 // Mech Bay 3D viewer: turntable, idle/walk/jump animation, weapon fire demo.
 import * as THREE from 'three';
-import { buildMech } from './models.js';
+import { buildMech, triggerWeaponAnim, tickWeaponAnims } from './models.js';
 import { WEAPONS } from '../core/data.js';
 import { sfx } from './audio.js';
 import { input } from './input.js';
@@ -116,6 +116,7 @@ export class MechPreview {
     const mt = this.model.weaponMounts[i];
     if (!w || !mt) return;
     const W = WEAPONS[w.t];
+    triggerWeaponAnim(mt);
     const from = mt.muzzle.getWorldPosition(new THREE.Vector3());
     const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(mt.muzzle.getWorldQuaternion(new THREE.Quaternion())).normalize();
     const to = from.clone().addScaledVector(dir, 3.2);
@@ -224,6 +225,8 @@ export class MechPreview {
           this.demoT = 1.1;
         }
       }
+      tickWeaponAnims(m, dt, this.t);
+      m.mats.vent.emissiveIntensity = 0.6 + Math.sin(this.t * 1.3) * 0.25;
       for (const mt of Object.values(m.weaponMounts)) if (mt.recoil) { mt.recoil -= dt; mt.group.position.addScaledVector(new THREE.Vector3(0, 0, 1).applyQuaternion(mt.group.quaternion), dt * 0.2 * m.scale); if (mt.recoil <= 0) mt.recoil = 0; }
     }
     for (let i = this.effects.length - 1; i >= 0; i--) {

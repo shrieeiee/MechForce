@@ -1,0 +1,21 @@
+const { chromium } = require('playwright');
+const OUT = process.env.OUT;
+(async () => {
+  const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  const p = await (await b.newContext({ viewport: { width: 1280, height: 760 } })).newPage();
+  await p.addInitScript(() => localStorage.setItem('mechforce.settings', JSON.stringify({ quality: 'medium', speed: 2 })));
+  const errs = []; p.on('pageerror', (e) => errs.push(e.message + e.stack));
+  await p.goto('file://' + process.cwd() + '/dist/web/index.html'); await p.waitForTimeout(1500);
+  await p.evaluate(() => { const a = window.__mf; a.stopAttract(); a.startLocal('skirmish'); });
+  await p.waitForTimeout(400);
+  await p.evaluate(() => { const s = window.__mf.session; s.send({ t: 'settings', settings: { mapSize: 'S', seed: 'perf1', tonnage: 280 } }); s.send({ t: 'slot', side: 0, ctrl: 'ai' }); s.send({ t: 'lance', side: 0, lance: ['Atlas', 'Awesome', 'Locust', 'Catapult'] }); });
+  await p.waitForTimeout(300); await p.evaluate(() => window.__mf.session.send({ t: 'start' })); await p.waitForTimeout(1500);
+  await p.keyboard.press('Enter');
+  await p.waitForTimeout(2000);
+  const info = await p.evaluate(() => { const r = window.__mf.renderer; let meshes = 0; for (const v of r.mechs.values()) v.model.root.traverse((o) => { if (o.isMesh) meshes++; }); return { mechs: r.mechs.size, meshesTotal: meshes, perMech: (meshes / r.mechs.size).toFixed(0), calls: r.gl.info.render.calls, tris: r.gl.info.render.triangles }; });
+  console.log(JSON.stringify(info));
+  await p.waitForTimeout(25000);
+  await p.screenshot({ path: OUT + '/90-battle.png' });
+  console.log('errors', errs.slice(0, 3));
+  await b.close();
+})();

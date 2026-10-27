@@ -1,253 +1,380 @@
+// Procedural mech models. Every design gets a body type, head style and armour layout
+// from its tonnage and name, and every weapon it carries is modelled where it is mounted.
+// Static parts are merged per material so a whole mech is only a few dozen draw calls.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { WEAPONS } from '../core/data.js';
 
 const geoCache = new Map();
-function box(w, h, d) {
-  const k = `b${w.toFixed(3)},${h.toFixed(3)},${d.toFixed(3)}`;
-  if (!geoCache.has(k)) {
-    const g = new THREE.BoxGeometry(w, h, d);
-    geoCache.set(k, g);
-  }
-  return geoCache.get(k);
+const cached = (k, make) => { if (!geoCache.has(k)) geoCache.set(k, make()); return geoCache.get(k); };
+const f3 = (n) => n.toFixed(3);
+function box(w, h, d) { return cached(`b${f3(w)},${f3(h)},${f3(d)}`, () => new THREE.BoxGeometry(w, h, d)); }
+// Chamfered armour block
+function plate(w, h, d, bev = 0.18) {
+  return cached(`p${f3(w)},${f3(h)},${f3(d)},${bev}`, () => {
+    const b = Math.min(w, h, d) * bev;
+    const sh = new THREE.Shape();
+    const x = w / 2 - b, y = h / 2 - b;
+    sh.moveTo(-x, -y); sh.lineTo(x, -y); sh.lineTo(x, y); sh.lineTo(-x, y); sh.lineTo(-x, -y);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: Math.max(0.001, d - 2 * b), bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelSegments: 1, curveSegments: 1 });
+    g.translate(0, 0, -(d - 2 * b) / 2);
+    g.computeVertexNormals();
+    return g;
+  });
 }
-function cyl(r1, r2, h, s = 8) {
-  const k = `c${r1},${r2},${h},${s}`;
-  if (!geoCache.has(k)) { const g = new THREE.CylinderGeometry(r1, r2, h, s); geoCache.set(k, g); }
-  return geoCache.get(k);
-}
+function cyl(r1, r2, h, s = 10, open = false) { return cached(`c${f3(r1)},${f3(r2)},${f3(h)},${s},${open}`, () => new THREE.CylinderGeometry(r1, r2, h, s, 1, open)); }
+function sphere(r, ws = 10, hs = 8) { return cached(`s${f3(r)},${ws}`, () => new THREE.SphereGeometry(r, ws, hs)); }
+function torus(r, t) { return cached(`t${f3(r)},${f3(t)}`, () => new THREE.TorusGeometry(r, t, 6, 14)); }
 
 function hashStr(s) { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h); }
-
 function glowMat(c, k = 1.6) { return new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: k, roughness: 0.3, metalness: 0.1 }); }
 
 export function weaponSize(t) { return [3, 5, 7, 9, 1, 3, 5, 7, 9, 2, 3, 4, 1, 2, 4, 2, 6][t] || 1; }
 
-// One visible part per weapon, built along +Z with its muzzle at the far end.
-export function weaponPart(t, s, mats) {
-  const g = new THREE.Group();
-  const W = WEAPONS[t];
-  const along = (geo, mat, z0, len) => { const m = new THREE.Mesh(geo, mat); m.rotation.x = Math.PI / 2; m.position.z = z0 + len / 2; g.add(m); return m; };
-  let len = 0.2 * s;
-  if (W.kind === 'm') {
-    const n = W.n, lrm = !!W.lrm;
-    const cols = n <= 2 ? 2 : n <= 6 ? 3 : n <= 10 ? 4 : 5, rows = Math.ceil(Math.min(n, 20) / cols);
-    const cw = 0.045 * s, w = cols * cw + 0.03 * s, h = rows * cw + 0.03 * s, d = (lrm ? 0.24 : 0.16) * s;
-    const housing = new THREE.Mesh(box(w, h, d), mats.trim); housing.position.z = d / 2 - 0.02 * s; g.add(housing);
-    const face = new THREE.Mesh(box(w * 0.92, h * 0.88, 0.012 * s), mats.dark); face.position.z = d - 0.015 * s; g.add(face);
-    const tubeGeo = cyl(cw * 0.32, cw * 0.32, 0.01 * s, 6);
-    for (let k = 0; k < Math.min(n, rows * cols); k++) {
-      const tube = new THREE.Mesh(tubeGeo, mats.tube);
-      tube.rotation.x = Math.PI / 2;
-      tube.position.set(((k % cols) - (cols - 1) / 2) * cw, (Math.floor(k / cols) - (rows - 1) / 2) * cw, d - 0.006 * s);
-      g.add(tube);
-    }
-    len = d;
-  } else if (t <= 3) { // autocannons
-    const r = [0.022, 0.03, 0.042, 0.06][t] * s, l = [0.62, 0.5, 0.45, 0.34][t] * s;
-    along(cyl(r * 1.6, r * 1.6, 0.1 * s, 10), mats.joint, 0, 0.1 * s);
-    along(cyl(r, r * 1.1, l, 10), mats.barrel, 0.08 * s, l);
-    if (t >= 2) { const brake = new THREE.Mesh(box(r * 3, r * 2.4, 0.06 * s), mats.barrel); brake.position.z = 0.08 * s + l; g.add(brake); }
-    len = 0.08 * s + l + (t >= 2 ? 0.03 * s : 0);
-  } else if (t === 4) { // machine gun: twin barrels
-    for (const dx of [-1, 1]) { const b = along(cyl(0.012 * s, 0.012 * s, 0.2 * s, 6), mats.barrel, 0, 0.2 * s); b.position.x = dx * 0.018 * s; }
-    const body = new THREE.Mesh(box(0.07 * s, 0.05 * s, 0.08 * s), mats.joint); body.position.z = 0.02 * s; g.add(body);
-    len = 0.2 * s;
-  } else if (t >= 12 && t <= 14) { // lasers
-    const k = t - 12;
-    const r = [0.022, 0.03, 0.04][k] * s, l = [0.16, 0.24, 0.36][k] * s;
-    along(cyl(r * 1.5, r * 1.7, l * 0.4, 8), mats.joint, 0, l * 0.4);
-    along(cyl(r, r, l, 8), mats.barrel, l * 0.2, l);
-    along(cyl(r * 0.75, r * 0.75, 0.025 * s, 10), [mats.lensS, mats.lensM, mats.lensL][k], l * 1.2, 0.025 * s);
-    len = l * 1.2 + 0.025 * s;
-  } else if (t === 15) { // flamer
-    along(cyl(0.03 * s, 0.05 * s, 0.14 * s, 8), mats.joint, 0, 0.14 * s);
-    along(cyl(0.045 * s, 0.03 * s, 0.05 * s, 8), mats.flame, 0.14 * s, 0.05 * s);
-    len = 0.19 * s;
-  } else { // plasma cannon
-    const l = 0.46 * s;
-    along(cyl(0.035 * s, 0.045 * s, l, 10), mats.barrel, 0, l);
-    for (let k = 0; k < 3; k++) along(cyl(0.06 * s, 0.06 * s, 0.03 * s, 10), mats.trim, l * (0.25 + k * 0.22), 0.03 * s);
-    along(cyl(0.028 * s, 0.028 * s, 0.03 * s, 10), mats.lensB, l, 0.03 * s);
-    len = l + 0.03 * s;
-  }
-  const mz = new THREE.Object3D(); mz.position.z = len + 0.02 * s; g.add(mz);
-  return { g, mz, len };
-}
-
 export function mechMaterials(colorHex) {
   const base = new THREE.Color(colorHex);
-  const body = base.clone().lerp(new THREE.Color('#9aa3ad'), 0.45);
+  const body = base.clone().lerp(new THREE.Color('#9aa3ad'), 0.5);
   return {
-    body: new THREE.MeshStandardMaterial({ color: body, metalness: 0.55, roughness: 0.5 }),
-    trim: new THREE.MeshStandardMaterial({ color: base, metalness: 0.35, roughness: 0.45, emissive: base, emissiveIntensity: 0.12 }),
-    dark: new THREE.MeshStandardMaterial({ color: '#2b3036', metalness: 0.7, roughness: 0.45 }),
-    joint: new THREE.MeshStandardMaterial({ color: '#4b535c', metalness: 0.8, roughness: 0.35 }),
-    glass: new THREE.MeshStandardMaterial({ color: '#0b1a22', metalness: 0.2, roughness: 0.1, emissive: new THREE.Color('#58d6ff'), emissiveIntensity: 1.1 }),
-    barrel: new THREE.MeshStandardMaterial({ color: '#1d2125', metalness: 0.85, roughness: 0.3 }),
-    lensS: glowMat('#ff8a3c'), lensM: glowMat('#ff4d9a'), lensL: glowMat('#ff3b5c'), lensB: glowMat('#7fc8ff'), flame: glowMat('#ffb02e'), tube: glowMat('#3a1a0a', 0.4),
+    body: new THREE.MeshStandardMaterial({ color: body, metalness: 0.55, roughness: 0.48 }),
+    trim: new THREE.MeshStandardMaterial({ color: base, metalness: 0.4, roughness: 0.42, emissive: base, emissiveIntensity: 0.08 }),
+    dark: new THREE.MeshStandardMaterial({ color: '#262b31', metalness: 0.7, roughness: 0.5 }),
+    joint: new THREE.MeshStandardMaterial({ color: '#59616b', metalness: 0.85, roughness: 0.32 }),
+    chrome: new THREE.MeshStandardMaterial({ color: '#b9c2cc', metalness: 1, roughness: 0.18 }),
+    glass: new THREE.MeshStandardMaterial({ color: '#0b1a22', metalness: 0.3, roughness: 0.05, emissive: new THREE.Color('#58d6ff'), emissiveIntensity: 1.1 }),
+    light: glowMat('#ffe9b0', 2.2),
+    vent: new THREE.MeshStandardMaterial({ color: '#2a1408', emissive: new THREE.Color('#ff5a14'), emissiveIntensity: 0.25, roughness: 0.6 }),
+    barrel: new THREE.MeshStandardMaterial({ color: '#1b1f23', metalness: 0.9, roughness: 0.28 }),
+    hazard: new THREE.MeshStandardMaterial({ color: '#e0b02a', metalness: 0.3, roughness: 0.5 }),
+    lensS: glowMat('#ff8a3c'), lensM: glowMat('#ff4d9a'), lensL: glowMat('#ff3b5c'), lensB: glowMat('#7fc8ff', 2), flame: glowMat('#ffb02e', 2.2),
+    tube: new THREE.MeshStandardMaterial({ color: '#0c0d0f', roughness: 0.9 }), warhead: glowMat('#d8402a', 0.5),
   };
 }
 
-// Build a mech model. Faces +Z. Returns handles for animation and effects.
+// --------------------------------------------------------------------------- weapons
+// One detailed part per weapon, built along +Z with its muzzle at the far end.
+export function weaponPart(t, s, mats) {
+  const g = new THREE.Group();
+  const W = WEAPONS[t];
+  const anim = {};
+  const add = (geo, mat, x, y, z, parent = g) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
+  const along = (geo, mat, z0, len, x = 0, y = 0, parent = g) => { const m = new THREE.Mesh(geo, mat); m.rotation.x = Math.PI / 2; m.position.set(x, y, z0 + len / 2); parent.add(m); return m; };
+  let len;
+  if (t <= 3) { // ---- autocannons
+    const r = [0.02, 0.028, 0.04, 0.058][t] * s, L = [0.66, 0.5, 0.44, 0.32][t] * s;
+    add(plate(r * 4.2, r * 3.6, 0.14 * s), mats.dark, 0, 0, 0.05 * s);
+    add(plate(r * 2.4, r * 1.6, 0.08 * s), mats.trim, 0, r * 2, 0.04 * s);
+    if (t === 3) { const drum = new THREE.Mesh(cyl(r * 1.8, r * 1.8, r * 2.2, 14), mats.joint); drum.rotation.z = Math.PI / 2; drum.position.set(r * 2.6, -r * 0.6, 0.04 * s); g.add(drum); }
+    along(cyl(r, r * 1.08, L, 12), mats.barrel, 0.1 * s, L);
+    const jackets = t === 0 ? 2 : 3;
+    for (let k = 0; k < jackets; k++) along(cyl(r * 1.45, r * 1.45, 0.035 * s, 12), mats.joint, 0.12 * s + k * L * 0.16, 0.035 * s);
+    if (t === 0) for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) { const fin = add(box(0.004 * s, r * 2.4, 0.12 * s), mats.dark, Math.cos(a) * r * 1.3, Math.sin(a) * r * 1.3, 0.1 * s + L * 0.7); fin.rotation.z = a; }
+    const brakeZ = 0.1 * s + L;
+    if (t >= 1) {
+      add(plate(r * 2.8, r * 2.2, 0.07 * s), mats.dark, 0, 0, brakeZ);
+      for (const sx of [-1, 1]) add(box(0.004 * s, r * 1.2, 0.03 * s), mats.tube, sx * r * 1.42, 0, brakeZ);
+    }
+    len = brakeZ + (t >= 1 ? 0.035 * s : 0);
+  } else if (t === 4) { // ---- rotary machine gun
+    add(plate(0.075 * s, 0.065 * s, 0.09 * s), mats.dark, 0, 0, 0.03 * s);
+    const spin = new THREE.Group(); spin.position.z = 0.08 * s; g.add(spin);
+    for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; along(cyl(0.007 * s, 0.007 * s, 0.17 * s, 6), mats.barrel, 0, 0.17 * s, Math.cos(a) * 0.016 * s, Math.sin(a) * 0.016 * s, spin); }
+    along(cyl(0.024 * s, 0.024 * s, 0.012 * s, 10), mats.joint, 0.02 * s, 0.012 * s, 0, 0, spin);
+    along(cyl(0.024 * s, 0.024 * s, 0.012 * s, 10), mats.joint, 0.15 * s, 0.012 * s, 0, 0, spin);
+    anim.spin = spin; anim.spinV = 0;
+    len = 0.26 * s;
+  } else if (t >= 12 && t <= 14) { // ---- lasers
+    const k = t - 12;
+    const r = [0.02, 0.027, 0.036][k] * s, L = [0.16, 0.24, 0.34][k] * s;
+    add(plate(r * 3.4, r * 3.4, L * 0.38), mats.dark, 0, 0, L * 0.16);
+    along(cyl(r, r, L, 10), mats.barrel, L * 0.2, L);
+    const fins = [3, 4, 5][k];
+    for (let q = 0; q < fins; q++) along(cyl(r * 1.9, r * 1.9, 0.008 * s, 12), mats.joint, L * 0.32 + q * L * 0.13, 0.008 * s);
+    const lens = [mats.lensS, mats.lensM, mats.lensL][k];
+    along(cyl(r * 0.8, r * 0.8, 0.02 * s, 12), lens, L * 1.2, 0.02 * s);
+    along(cyl(r * 1.15, r * 1.15, 0.012 * s, 12, true), mats.chrome, L * 1.18, 0.02 * s);
+    if (k === 2) for (const a of [0, 2.09, 4.19]) { const prong = add(box(0.012 * s, 0.012 * s, 0.09 * s), mats.chrome, Math.cos(a) * r * 1.6, Math.sin(a) * r * 1.6, L * 1.24); prong.rotation.z = a; }
+    len = L * 1.2 + 0.03 * s + (k === 2 ? 0.05 * s : 0);
+  } else if (t === 15) { // ---- flamer
+    const tank = new THREE.Mesh(cyl(0.03 * s, 0.03 * s, 0.14 * s, 12), mats.hazard); tank.rotation.x = Math.PI / 2; tank.position.set(0, -0.045 * s, 0.06 * s); g.add(tank);
+    along(cyl(0.022 * s, 0.03 * s, 0.13 * s, 10), mats.joint, 0, 0.13 * s);
+    along(cyl(0.04 * s, 0.022 * s, 0.06 * s, 10), mats.dark, 0.13 * s, 0.06 * s);
+    const pilot = add(sphere(0.011 * s, 8, 6), mats.flame, 0, -0.02 * s, 0.2 * s);
+    pilot.userData.keep = true;
+    anim.pilot = pilot;
+    len = 0.21 * s;
+  } else if (t === 16) { // ---- plasma cannon: twin rails, coils and a charging core
+    const L = 0.46 * s;
+    const coreMat = mats.lensB.clone(); coreMat.userData.base = coreMat.emissiveIntensity;
+    add(plate(0.1 * s, 0.09 * s, 0.12 * s), mats.dark, 0, 0, 0.04 * s);
+    const core = add(sphere(0.032 * s, 12, 10), coreMat, 0, 0, 0.05 * s); core.userData.keep = true;
+    for (const sx of [-1, 1]) add(plate(0.018 * s, 0.03 * s, L), mats.chrome, sx * 0.028 * s, 0, 0.1 * s + L / 2);
+    for (let q = 0; q < 4; q++) { const c = add(torus(0.042 * s, 0.006 * s), coreMat, 0, 0, 0.14 * s + q * L * 0.22); c.userData.keep = true; }
+    const tip = add(sphere(0.02 * s, 10, 8), coreMat, 0, 0, 0.1 * s + L); tip.userData.keep = true;
+    anim.charge = coreMat; anim.chargeT = 0;
+    len = 0.12 * s + L;
+  } else if (W.kind === 'm') { // ---- missile racks
+    const n = W.n, lrm = !!W.lrm;
+    const cols = n <= 2 ? 2 : n <= 6 ? 3 : n <= 10 ? 4 : 5, rows = Math.ceil(Math.min(n, 20) / cols);
+    const cw = (lrm ? 0.042 : 0.05) * s, w = cols * cw + 0.035 * s, h = rows * cw + 0.035 * s, d = (lrm ? 0.24 : 0.17) * s;
+    add(plate(w, h, d, 0.12), mats.trim, 0, 0, d / 2 - 0.02 * s);
+    add(plate(w * 0.92, h * 0.88, 0.012 * s), mats.dark, 0, 0, d - 0.018 * s);
+    for (let k = 0; k < Math.min(n, rows * cols); k++) {
+      const x = ((k % cols) - (cols - 1) / 2) * cw, y = (Math.floor(k / cols) - (rows - 1) / 2) * cw;
+      along(cyl(cw * 0.34, cw * 0.34, 0.02 * s, 8), mats.tube, d - 0.03 * s, 0.02 * s, x, y);
+      if (!lrm) along(sphere(cw * 0.26, 8, 6), mats.warhead, d - 0.022 * s, 0.001, x, y);
+    }
+    if (lrm) { // armoured hatch that flips up when the rack fires
+      const hinge = new THREE.Group(); hinge.position.set(0, h / 2, d - 0.01 * s); g.add(hinge);
+      const lid = new THREE.Mesh(plate(w * 1.02, h * 1.02, 0.018 * s), mats.trim); lid.position.set(0, -h / 2, 0.012 * s); hinge.add(lid);
+      for (const sx of [-1, 1]) { const st = new THREE.Mesh(box(0.008 * s, h * 0.6, 0.006 * s), mats.hazard); st.position.set(sx * w * 0.3, -h / 2, 0.023 * s); hinge.add(st); }
+      anim.hatch = hinge; anim.hatchT = 0;
+    } else add(plate(w * 0.5, h * 0.3, 0.04 * s), mats.dark, 0, -h / 2 - 0.01 * s, d * 0.4);
+    len = d;
+  } else len = 0.2 * s;
+  const mz = new THREE.Object3D(); mz.position.z = len + 0.02 * s; g.add(mz);
+  return { g, mz, len, anim };
+}
+
+// Kick off a weapon's firing animation (spin-up, hatch, charge glow)
+export function triggerWeaponAnim(mount) {
+  const a = mount && mount.anim;
+  if (!a) return;
+  if (a.spin) a.spinV = 40;
+  if (a.hatch) a.hatchT = 1.2;
+  if (a.charge) a.chargeT = 0.5;
+}
+export function tickWeaponAnims(model, dt, time) {
+  for (const mt of Object.values(model.weaponMounts)) {
+    const a = mt.anim;
+    if (!a) continue;
+    if (a.spin) { a.spin.rotation.z += a.spinV * dt; a.spinV *= Math.pow(0.25, dt); }
+    if (a.hatch) {
+      a.hatchT = Math.max(0, a.hatchT - dt);
+      const want = a.hatchT > 0 ? -1.9 : 0;
+      a.hatch.rotation.x += (want - a.hatch.rotation.x) * Math.min(1, dt * 9);
+    }
+    if (a.charge) {
+      a.chargeT = Math.max(0, a.chargeT - dt);
+      a.charge.emissiveIntensity = (a.charge.userData.base || 2) * (0.75 + Math.sin(time * 6 + mt.group.id) * 0.25) + a.chargeT * 9;
+    }
+    if (a.pilot) a.pilot.scale.setScalar(0.8 + Math.random() * 0.5);
+  }
+}
+
+// --------------------------------------------------------------------------- body
+function mergeStatic(obj) {
+  for (const c of obj.children) if (!c.isMesh) mergeStatic(c);
+  const byMat = new Map();
+  for (const c of obj.children) if (c.isMesh && !c.userData.keep) { const k = c.material.uuid; if (!byMat.has(k)) byMat.set(k, []); byMat.get(k).push(c); }
+  for (const list of byMat.values()) {
+    if (list.length < 2) continue;
+    const geos = list.map((m) => {
+      m.updateMatrix();
+      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+      if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+      g.clearGroups();
+      g.applyMatrix4(m.matrix);
+      return g;
+    });
+    const merged = mergeGeometries(geos, false);
+    if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, list[0].material);
+    obj.add(mesh);
+    for (const m of list) obj.remove(m);
+  }
+}
+
 export function buildMech(spec, colorHex) {
   const { design, tons, cls } = spec;
-  const types = new Set(spec.weapons.map((w) => w.t));
   const h = hashStr(design);
-  const s = 0.62 + tons / 260 + cls * 0.03; // overall scale
+  const s = 0.62 + tons / 260 + cls * 0.03;
   const mats = mechMaterials(colorHex);
+  const arche = (cls <= 1 && h % 4 === 0) ? 'walker' : (cls === 3 || (cls === 2 && h % 3 === 0)) ? 'brute' : 'humanoid';
+  const brute = arche === 'brute', walker = arche === 'walker';
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
+  const M = (geo, mat, x, y, z, parent) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
 
-  const legLen = (0.52 + (h % 7) * 0.02 + (cls === 0 ? 0.08 : 0)) * s;
-  const torsoW = (0.62 + cls * 0.07 + (h % 5) * 0.02) * s;
-  const torsoH = (0.42 + cls * 0.04) * s;
-  const torsoD = (0.42 + (h % 3) * 0.04) * s;
+  const legLen = (0.5 + (h % 5) * 0.02 + (walker ? 0.1 : cls === 0 ? 0.06 : 0) - (brute ? 0.03 : 0)) * s;
+  const torsoW = (0.6 + cls * 0.08 + (h % 5) * 0.02 + (brute ? 0.12 : 0)) * s;
+  const torsoH = (0.42 + cls * 0.04 + (brute ? 0.05 : 0)) * s;
+  const torsoD = (0.4 + (h % 3) * 0.04) * s;
   const hipY = legLen * 1.9;
-  const birdLeg = cls <= 1 && (h % 4 === 0 || (cls === 0 && h % 2 === 0));
+  const legW = (0.16 + cls * 0.02 + (brute ? 0.03 : 0)) * s;
 
-  // legs
+  // ---- legs
   const legs = [];
   for (const side of [-1, 1]) {
     const hip = new THREE.Group();
-    hip.position.set(side * torsoW * 0.28, hipY, 0);
-    const thigh = new THREE.Mesh(box(0.18 * s, legLen, 0.22 * s), mats.body);
-    thigh.position.y = -legLen / 2;
-    hip.add(thigh);
+    hip.position.set(side * torsoW * 0.27, hipY, 0);
+    const hj = M(cyl(0.085 * s, 0.085 * s, 0.12 * s, 12), mats.joint, side * 0.02 * s, 0, 0, hip); hj.rotation.z = Math.PI / 2;
+    const thigh = new THREE.Group(); hip.add(thigh);
+    if (walker) thigh.rotation.x = -0.35;
+    M(plate(legW, legLen, legW * 1.35), mats.body, 0, -legLen / 2, 0, thigh);
+    M(plate(legW * 1.1, legLen * 0.6, 0.05 * s), mats.trim, 0, -legLen * 0.42, legW * 0.72, thigh);
+    M(cyl(0.016 * s, 0.016 * s, legLen * 0.8, 6), mats.chrome, 0, -legLen * 0.5, -legW * 0.85, thigh);
     const knee = new THREE.Group();
     knee.position.y = -legLen;
     hip.add(knee);
-    const kneeCap = new THREE.Mesh(box(0.2 * s, 0.14 * s, 0.24 * s), mats.joint);
-    knee.add(kneeCap);
-    const shin = new THREE.Mesh(box(0.16 * s, legLen * 0.95, 0.2 * s), mats.trim);
-    shin.position.y = -legLen * 0.47;
-    knee.add(shin);
-    const foot = new THREE.Mesh(box(0.24 * s, 0.08 * s, 0.38 * s), mats.dark);
-    foot.position.set(0, -legLen * 0.92, 0.04 * s);
-    knee.add(foot);
-    if (birdLeg) { thigh.rotation.x = -0.35; knee.rotation.x = 0.7; }
+    if (walker) { knee.position.z = -Math.sin(0.35) * legLen; knee.position.y = -Math.cos(0.35) * legLen; }
+    const kj = M(cyl(0.075 * s, 0.075 * s, legW * 1.2, 12), mats.joint, 0, 0, 0, knee); kj.rotation.z = Math.PI / 2;
+    const guard = M(plate(legW * 1.2, 0.16 * s, 0.09 * s), mats.trim, 0, 0.02 * s, legW * 0.6, knee); guard.rotation.x = -0.35;
+    M(plate(legW * 0.92, legLen * 0.95, legW * 1.2), mats.dark, 0, -legLen * 0.47, 0, knee);
+    M(plate(legW * 1.0, legLen * 0.62, 0.05 * s), mats.body, 0, -legLen * 0.42, legW * 0.66, knee);
+    for (let v = 0; v < 3; v++) M(box(legW * 0.7, 0.008 * s, 0.01 * s), mats.vent, 0, -legLen * (0.25 + v * 0.06), -legW * 0.62, knee);
+    const ankle = new THREE.Group(); ankle.position.y = -legLen * 0.92; knee.add(ankle);
+    M(sphere(0.06 * s), mats.joint, 0, 0, 0, ankle);
+    M(plate(legW * 1.45, 0.07 * s, 0.3 * s), mats.dark, 0, -0.03 * s, 0.05 * s, ankle);
+    for (const a of [-0.45, 0, 0.45]) { const toe = M(plate(0.05 * s, 0.05 * s, 0.14 * s), mats.body, Math.sin(a) * 0.08 * s, -0.035 * s, 0.2 * s + Math.cos(a) * 0.02 * s, ankle); toe.rotation.y = a; }
+    const heel = M(plate(0.05 * s, 0.05 * s, 0.12 * s), mats.body, 0, -0.035 * s, -0.13 * s, ankle); heel.rotation.x = 0.3;
+    if (walker) { ankle.rotation.x = -0.35; knee.rotation.x = 0.7; }
     body.add(hip);
-    legs.push({ hip, knee, side, bird: birdLeg });
+    legs.push({ hip, knee, side, bird: walker });
   }
 
-  // pelvis
-  const pelvis = new THREE.Mesh(box(torsoW * 0.62, 0.16 * s, torsoD * 0.7), mats.joint);
-  pelvis.position.y = hipY;
-  body.add(pelvis);
+  // ---- pelvis & skirts
+  M(plate(torsoW * 0.6, 0.15 * s, torsoD * 0.72), mats.joint, 0, hipY, 0, body);
+  const skirtF = M(plate(torsoW * 0.36, 0.14 * s, 0.04 * s), mats.trim, 0, hipY - 0.07 * s, torsoD * 0.4, body); skirtF.rotation.x = 0.25;
+  for (const side of [-1, 1]) { const sk = M(plate(0.04 * s, 0.15 * s, torsoD * 0.6), mats.body, side * torsoW * 0.36, hipY - 0.06 * s, 0, body); sk.rotation.z = side * 0.25; }
 
-  // torso (twists)
+  // ---- torso
   const torso = new THREE.Group();
   torso.position.y = hipY + 0.08 * s;
   body.add(torso);
-  const ct = new THREE.Mesh(box(torsoW * 0.46, torsoH, torsoD), mats.body);
-  ct.position.y = torsoH / 2;
-  torso.add(ct);
-  const chest = new THREE.Mesh(box(torsoW * 0.36, torsoH * 0.55, 0.05 * s), mats.trim);
-  chest.position.set(0, torsoH * 0.55, torsoD / 2 + 0.02 * s);
-  torso.add(chest);
+  M(cyl(0.1 * s, 0.13 * s, 0.12 * s, 12), mats.joint, 0, 0, 0, torso);
+  const coreH = walker ? torsoH * 0.82 : torsoH;
+  M(plate(torsoW * 0.48, coreH, torsoD), mats.body, 0, coreH / 2, 0, torso);
+  const chest = M(plate(torsoW * 0.4, coreH * 0.62, 0.06 * s), mats.trim, 0, coreH * 0.56, torsoD / 2 + 0.01 * s, torso); chest.rotation.x = -0.12;
+  M(plate(0.05 * s, coreH * 0.5, 0.08 * s), mats.body, 0, coreH * 0.58, torsoD / 2 + 0.04 * s, torso);
   for (const side of [-1, 1]) {
-    const st = new THREE.Mesh(box(torsoW * 0.3, torsoH * 0.86, torsoD * 0.92), mats.body);
-    st.position.set(side * torsoW * 0.37, torsoH * 0.45, -0.01);
-    torso.add(st);
-    const stripe = new THREE.Mesh(box(torsoW * 0.31, torsoH * 0.12, torsoD * 0.94), mats.trim);
-    stripe.position.set(side * torsoW * 0.37, torsoH * 0.18, -0.01);
-    torso.add(stripe);
+    M(plate(torsoW * 0.3, torsoH * 0.86, torsoD * 0.94), mats.body, side * torsoW * 0.37, torsoH * 0.45, -0.01, torso);
+    M(plate(torsoW * 0.31, torsoH * 0.12, torsoD * 0.96), mats.trim, side * torsoW * 0.37, torsoH * 0.16, -0.01, torso);
+    M(plate(0.03 * s, torsoH * 0.6, torsoD * 0.7), mats.dark, side * torsoW * 0.53, torsoH * 0.48, 0, torso);
+    for (let v = 0; v < 3; v++) M(box(0.012 * s, 0.012 * s, torsoD * 0.5), mats.vent, side * torsoW * 0.545, torsoH * (0.34 + v * 0.1), 0, torso);
+    M(sphere(0.016 * s, 8, 6), mats.light, side * torsoW * 0.46, torsoH * 0.82, torsoD / 2 + 0.005, torso);
   }
-  // cockpit / head
-  const head = new THREE.Group();
-  head.position.set(0, torsoH + 0.02 * s, torsoD * 0.12);
-  torso.add(head);
-  const headBox = new THREE.Mesh(box(0.26 * s, 0.16 * s, 0.26 * s), mats.body);
-  headBox.position.y = 0.08 * s;
-  head.add(headBox);
-  const glass = new THREE.Mesh(box(0.2 * s, 0.06 * s, 0.04 * s), mats.glass);
-  glass.position.set(0, 0.1 * s, 0.13 * s);
-  head.add(glass);
-  if (h % 3 === 1) { // antenna
-    const ant = new THREE.Mesh(cyl(0.008 * s, 0.008 * s, 0.35 * s, 4), mats.dark);
-    ant.position.set(0.09 * s, 0.3 * s, -0.05 * s); head.add(ant);
+  // back: reactor pack, exhaust stacks and glowing heat vents
+  M(plate(torsoW * 0.52, torsoH * 0.66, 0.16 * s), mats.dark, 0, torsoH * 0.5, -torsoD / 2 - 0.06 * s, torso);
+  for (let v = 0; v < 4; v++) M(box(torsoW * 0.36, 0.014 * s, 0.01 * s), mats.vent, 0, torsoH * (0.3 + v * 0.09), -torsoD / 2 - 0.145 * s, torso);
+  const stacks = brute ? 3 : 2;
+  for (let k = 0; k < stacks; k++) {
+    const x = (k - (stacks - 1) / 2) * 0.1 * s;
+    M(cyl(0.028 * s, 0.032 * s, 0.22 * s, 10), mats.joint, x, torsoH * 0.95, -torsoD / 2 - 0.07 * s, torso);
+    M(cyl(0.02 * s, 0.02 * s, 0.01 * s, 10), mats.tube, x, torsoH * 0.95 + 0.11 * s, -torsoD / 2 - 0.07 * s, torso);
   }
-  // back: reactor vents / jump jets
-  const pack = new THREE.Mesh(box(torsoW * 0.5, torsoH * 0.6, 0.14 * s), mats.dark);
-  pack.position.set(0, torsoH * 0.5, -torsoD / 2 - 0.06 * s);
-  torso.add(pack);
   const jets = [];
   if (spec.jump > 0) {
     for (const side of [-1, 1]) {
-      const j = new THREE.Mesh(cyl(0.06 * s, 0.08 * s, 0.22 * s, 8), mats.joint);
-      j.position.set(side * torsoW * 0.18, torsoH * 0.25, -torsoD / 2 - 0.15 * s);
-      torso.add(j);
-      const nozzle = new THREE.Object3D(); nozzle.position.set(side * torsoW * 0.18, torsoH * 0.1, -torsoD / 2 - 0.15 * s);
+      M(cyl(0.05 * s, 0.075 * s, 0.2 * s, 12), mats.joint, side * torsoW * 0.2, torsoH * 0.22, -torsoD / 2 - 0.17 * s, torso);
+      M(cyl(0.055 * s, 0.055 * s, 0.03 * s, 12, true), mats.vent, side * torsoW * 0.2, torsoH * 0.11, -torsoD / 2 - 0.17 * s, torso);
+      const nozzle = new THREE.Object3D(); nozzle.position.set(side * torsoW * 0.2, torsoH * 0.08, -torsoD / 2 - 0.17 * s);
       torso.add(nozzle); jets.push(nozzle);
     }
   }
 
+  // ---- head / cockpit
+  const head = new THREE.Group();
+  torso.add(head);
+  const headStyle = walker ? 'nose' : brute ? 'sunk' : ['dome', 'slit', 'canopy'][h % 3];
+  if (headStyle === 'nose') {
+    head.position.set(0, coreH * 0.62, torsoD / 2 + 0.06 * s);
+    const n = M(plate(torsoW * 0.36, 0.17 * s, 0.24 * s), mats.body, 0, 0, 0.06 * s, head); n.rotation.x = 0.12;
+    const cg = M(plate(torsoW * 0.3, 0.07 * s, 0.16 * s), mats.glass, 0, 0.065 * s, 0.07 * s, head); cg.rotation.x = 0.35;
+    M(box(torsoW * 0.32, 0.012 * s, 0.17 * s), mats.dark, 0, 0.075 * s, 0.05 * s, head);
+  } else if (headStyle === 'sunk') {
+    head.position.set(0, torsoH - 0.02 * s, torsoD * 0.1);
+    M(plate(torsoW * 0.5, 0.12 * s, torsoD * 0.6), mats.dark, 0, 0.02 * s, -0.04 * s, head);
+    M(plate(0.24 * s, 0.13 * s, 0.22 * s), mats.body, 0, 0.07 * s, 0.06 * s, head);
+    M(box(0.18 * s, 0.025 * s, 0.02 * s), mats.glass, 0, 0.09 * s, 0.17 * s, head);
+  } else {
+    head.position.set(0, torsoH + 0.02 * s, torsoD * 0.12);
+    M(cyl(0.06 * s, 0.07 * s, 0.05 * s, 10), mats.joint, 0, 0.02 * s, 0, head);
+    if (headStyle === 'dome') {
+      M(sphere(0.12 * s, 14, 10), mats.body, 0, 0.12 * s, 0, head).scale.set(1, 0.8, 1.05);
+      M(torus(0.105 * s, 0.018 * s), mats.glass, 0, 0.13 * s, 0, head).rotation.x = Math.PI / 2;
+    } else if (headStyle === 'slit') {
+      M(plate(0.25 * s, 0.17 * s, 0.26 * s), mats.body, 0, 0.11 * s, 0, head);
+      M(plate(0.27 * s, 0.05 * s, 0.1 * s), mats.trim, 0, 0.2 * s, 0.06 * s, head);
+      M(box(0.2 * s, 0.025 * s, 0.02 * s), mats.glass, 0, 0.12 * s, 0.13 * s, head);
+    } else {
+      M(plate(0.26 * s, 0.15 * s, 0.24 * s), mats.body, 0, 0.1 * s, -0.02 * s, head);
+      const cnp = M(plate(0.2 * s, 0.1 * s, 0.14 * s), mats.glass, 0, 0.14 * s, 0.07 * s, head); cnp.rotation.x = -0.4;
+    }
+    if (h % 3 === 1) M(cyl(0.006 * s, 0.006 * s, 0.36 * s, 4), mats.chrome, 0.09 * s, 0.32 * s, -0.06 * s, head);
+    if (h % 5 === 2) { const lamp = M(cyl(0.03 * s, 0.024 * s, 0.05 * s, 10), mats.dark, -0.15 * s, 0.12 * s, 0.05 * s, head); lamp.rotation.x = Math.PI / 2; M(cyl(0.022 * s, 0.022 * s, 0.006 * s, 10), mats.light, -0.15 * s, 0.12 * s, 0.078 * s, head).rotation.x = Math.PI / 2; }
+  }
+
+  // ---- weapons
   const muzzles = {};
   const weaponMounts = {};
   const byLoc = (loc) => spec.weapons.filter((w) => w.loc === loc);
-  const mount = (w, parent, pos, alongDown) => {
-    const part = weaponPart(w.t, s, mats);
-    if (alongDown) part.g.rotation.x = Math.PI / 2; // build axis +Z -> arm axis -Y
+  const isBig = (t) => [2, 3, 7, 8, 14, 16].includes(t);
+  const mount = (w, parent, pos, alongDown, scale = 1) => {
+    const part = weaponPart(w.t, s * scale, mats);
+    if (alongDown) part.g.rotation.x = Math.PI / 2;
     part.g.position.copy(pos);
     parent.add(part.g);
-    const meshes = [];
-    part.g.traverse((o) => { if (o.isMesh) meshes.push(o); });
-    weaponMounts[w.i] = { muzzle: part.mz, meshes, group: part.g };
+    weaponMounts[w.i] = { muzzle: part.mz, meshes: [], group: part.g, anim: part.anim };
     if (!muzzles[w.loc]) muzzles[w.loc] = part.mz;
   };
-  // side torsos: missile racks ride on the shoulders, guns poke out of the front
   for (const [side, loc] of [[-1, 1], [1, 3]]) {
-    const ws = byLoc(loc);
-    let mi = 0, gi = 0;
-    for (const w of ws) {
-      if (WEAPONS[w.t].kind === 'm') {
-        const x = side * (torsoW * 0.3 + (mi % 2) * 0.13 * s), z = -0.12 * s + Math.floor(mi / 2) * 0.0;
-        mount(w, torso, new THREE.Vector3(x, torsoH + 0.04 * s + Math.floor(mi / 2) * 0.17 * s, z), false);
-        mi++;
+    let top = 0, port = 0;
+    for (const w of byLoc(loc)) {
+      if (isBig(w.t) || WEAPONS[w.t].kind === 'm') { // shoulder turret
+        const turret = new THREE.Group();
+        turret.position.set(side * (torsoW * 0.3 + (top % 2) * 0.15 * s), torsoH + 0.02 * s + Math.floor(top / 2) * 0.16 * s, -0.08 * s);
+        torso.add(turret);
+        M(plate(0.1 * s, 0.05 * s, 0.12 * s), mats.joint, 0, 0, 0.02 * s, turret);
+        mount(w, turret, new THREE.Vector3(0, 0.06 * s, 0), false);
+        top++;
       } else {
-        const x = side * (torsoW * 0.3 + (gi % 2) * 0.09 * s), y = torsoH * (0.7 - Math.floor(gi / 2) * 0.28);
-        mount(w, torso, new THREE.Vector3(x, y, torsoD / 2 * 0.92), false);
-        gi++;
+        const x = side * (torsoW * 0.3 + (port % 2) * 0.09 * s), y = torsoH * (0.68 - Math.floor(port / 2) * 0.26);
+        M(cyl(0.035 * s, 0.035 * s, 0.03 * s, 10), mats.dark, x, y, torsoD / 2 * 0.95, torso).rotation.x = Math.PI / 2;
+        mount(w, torso, new THREE.Vector3(x, y, torsoD / 2 * 0.95), false);
+        port++;
       }
     }
   }
-  // center torso: a row of chest guns (missiles get a chest launcher)
-  byLoc(2).forEach((w, k) => {
-    const n = byLoc(2).length;
-    const x = (k - (n - 1) / 2) * 0.09 * s;
-    mount(w, torso, new THREE.Vector3(x, torsoH * (WEAPONS[w.t].kind === 'm' ? 0.3 : 0.42), torsoD / 2 + 0.02 * s), false);
-  });
-  // head-mounted
-  byLoc(0).forEach((w, k) => mount(w, head, new THREE.Vector3((k - 0.5) * 0.07 * s + (byLoc(0).length === 1 ? 0.035 * s : 0), 0.04 * s, 0.12 * s), false));
-  // legs (rare): fire from the thigh
-  for (const [loc, li] of [[6, 0], [7, 1]]) byLoc(loc).forEach((w, k) => mount(w, legs[li].hip, new THREE.Vector3(0, -0.2 * s - k * 0.12 * s, 0.12 * s), false));
+  byLoc(2).forEach((w, k, arr) => mount(w, torso, new THREE.Vector3((k - (arr.length - 1) / 2) * 0.1 * s, coreH * (WEAPONS[w.t].kind === 'm' ? 0.28 : 0.4), torsoD / 2 + 0.03 * s), false));
+  byLoc(0).forEach((w, k, arr) => mount(w, head, new THREE.Vector3(arr.length === 1 ? 0.14 * s : (k - 0.5) * 0.28 * s, 0.1 * s, 0.06 * s), false, 0.9));
+  for (const [loc, li] of [[6, 0], [7, 1]]) byLoc(loc).forEach((w, k) => mount(w, legs[li].hip, new THREE.Vector3(legs[li].side * legW * 0.8, -0.18 * s - k * 0.12 * s, 0.1 * s), false, 0.85));
   if (!muzzles[2]) { const m = new THREE.Object3D(); m.position.set(0, torsoH * 0.55, torsoD / 2 + 0.06 * s); torso.add(m); muzzles[2] = m; }
   if (!muzzles[0]) { const m = new THREE.Object3D(); m.position.set(0, torsoH + 0.12 * s, torsoD * 0.3); torso.add(m); muzzles[0] = m; }
+  if (!muzzles[1]) { const m = new THREE.Object3D(); m.position.set(-torsoW * 0.37, torsoH * 0.5, torsoD / 2 + 0.03); torso.add(m); muzzles[1] = m; }
+  if (!muzzles[3]) { const m = new THREE.Object3D(); m.position.set(torsoW * 0.37, torsoH * 0.5, torsoD / 2 + 0.03); torso.add(m); muzzles[3] = m; }
 
-  // arms: every arm weapon is clustered around the forearm
+  // ---- arms
   const arms = [];
-  const ARM_SLOTS = [[0, 0], [-0.075, 0.07], [0.075, 0.07], [0, 0.13], [-0.075, -0.06], [0.075, -0.06]];
+  const ARM_SLOTS = [[0, 0], [-0.08, 0.07], [0.08, 0.07], [0, 0.14], [-0.08, -0.07], [0.08, -0.07]];
   for (const [side, loc] of [[-1, 4], [1, 5]]) {
     const sh = new THREE.Group();
     sh.position.set(side * (torsoW * 0.52 + 0.06 * s), torsoH * 0.78, 0);
     torso.add(sh);
-    const shoulder = new THREE.Mesh(box(0.2 * s, 0.2 * s, 0.26 * s), mats.trim);
-    sh.add(shoulder);
-    const upper = new THREE.Mesh(box(0.13 * s, 0.34 * s, 0.15 * s), mats.body);
-    upper.position.y = -0.24 * s;
-    sh.add(upper);
-    const elbow = new THREE.Group(); elbow.position.y = -0.42 * s; sh.add(elbow);
+    M(sphere(0.09 * s, 12, 10), mats.joint, 0, 0, 0, sh);
+    const pd = brute ? 1.35 : walker ? 0.8 : 1;
+    const paul = M(plate(0.22 * s * pd, 0.12 * s * pd, 0.3 * s * pd), mats.trim, side * 0.03 * s, 0.07 * s, 0, sh); paul.rotation.z = side * -0.3;
+    M(plate(0.2 * s * pd, 0.03 * s, 0.28 * s * pd), mats.hazard, side * 0.05 * s, 0.135 * s * pd, 0, sh).rotation.z = side * -0.3;
+    const upLen = (walker ? 0.24 : 0.34) * s;
+    M(plate(0.13 * s, upLen, 0.15 * s), mats.body, 0, -upLen / 2 - 0.06 * s, 0, sh);
+    M(cyl(0.012 * s, 0.012 * s, upLen * 0.8, 6), mats.chrome, side * 0.075 * s, -upLen / 2 - 0.06 * s, 0, sh);
+    const elbow = new THREE.Group(); elbow.position.y = -upLen - 0.08 * s; sh.add(elbow);
     elbow.rotation.x = -1.2;
-    const fore = new THREE.Mesh(box(0.15 * s, 0.34 * s, 0.17 * s), mats.dark);
-    fore.position.y = -0.15 * s;
-    elbow.add(fore);
+    const ej = M(cyl(0.06 * s, 0.06 * s, 0.15 * s, 10), mats.joint, 0, 0, 0, elbow); ej.rotation.z = Math.PI / 2;
     const ws = byLoc(loc).slice().sort((a, b) => weaponSize(b.t) - weaponSize(a.t));
-    if (!ws.length) {
-      const hand = new THREE.Mesh(box(0.14 * s, 0.14 * s, 0.12 * s), mats.joint);
-      hand.position.y = -0.38 * s;
-      elbow.add(hand);
+    const single = ws.length === 1 && isBig(ws[0].t);
+    if (!single) {
+      M(plate(0.15 * s, 0.32 * s, 0.17 * s), mats.dark, 0, -0.16 * s, 0, elbow);
+      M(plate(0.16 * s, 0.2 * s, 0.04 * s), mats.body, 0, -0.18 * s, 0.09 * s, elbow);
+    }
+    if (!ws.length) { // hand with fingers
+      M(plate(0.13 * s, 0.1 * s, 0.11 * s), mats.joint, 0, -0.36 * s, 0, elbow);
+      for (let f = 0; f < 3; f++) { const fg = M(plate(0.028 * s, 0.09 * s, 0.035 * s), mats.dark, (f - 1) * 0.04 * s, -0.44 * s, 0.03 * s, elbow); fg.rotation.x = 0.4; }
+      const th = M(plate(0.028 * s, 0.07 * s, 0.035 * s), mats.dark, side * -0.07 * s, -0.4 * s, 0.03 * s, elbow); th.rotation.z = side * 0.5;
     }
     ws.forEach((w, k) => {
+      if (single) { M(plate(0.17 * s, 0.14 * s, 0.17 * s), mats.dark, 0, -0.08 * s, 0, elbow); mount(w, elbow, new THREE.Vector3(0, -0.14 * s, 0), true, 1.25); return; }
       const [dx, dz] = ARM_SLOTS[k % ARM_SLOTS.length];
       mount(w, elbow, new THREE.Vector3(dx * s * side, -0.3 * s, dz * s), true);
     });
@@ -255,12 +382,14 @@ export function buildMech(spec, colorHex) {
     arms.push({ sh, elbow, side, loc });
   }
 
+  // ---- merge static geometry, then collect weapon meshes for highlighting
+  mergeStatic(root);
+  for (const wm of Object.values(weaponMounts)) wm.group.traverse((o) => { if (o.isMesh) wm.meshes.push(o); });
   root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   const height = hipY + torsoH + 0.3 * s;
   return { root, body, torso, head, legs, arms, muzzles, weaponMounts, jets, mats, height, scale: s };
 }
 
-// Items and props
 export function buildItem(kind) {
   const g = new THREE.Group();
   const glow = new THREE.MeshStandardMaterial({ color: '#ffd166', emissive: '#ffb23e', emissiveIntensity: 1.4, metalness: 0.2, roughness: 0.4 });
