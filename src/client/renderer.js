@@ -149,7 +149,7 @@ export class Renderer {
         pos.push(c.px + a[0] * R, top, c.py + a[1] * R, c.px + b[0] * R, top, c.py + b[1] * R, c.px + b[0] * R, base, c.py + b[1] * R, c.px + a[0] * R, base, c.py + a[1] * R);
         for (let q = 0; q < 4; q++) { const f = q < 2 ? 1 : 0.55; col.push(side.r * f, side.g * f, side.b * f); }
         vi += 4;
-        idx.push(s0, s0 + 2, s0 + 1, s0, s0 + 3, s0 + 2);
+        idx.push(s0, s0 + 1, s0 + 2, s0, s0 + 2, s0 + 3);
       }
       // grid outline
       for (let k = 0; k < 6; k++) {

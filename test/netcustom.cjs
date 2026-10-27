@@ -1,0 +1,23 @@
+const { startServer } = require('../dist/server.cjs');
+const WebSocket = require('ws');
+(async () => {
+  const srv = await startServer({ port: 7399, beacon: false, log: () => {} });
+  const ws = new WebSocket('ws://127.0.0.1:7399/ws');
+  const got = [];
+  ws.on('message', (d) => got.push(JSON.parse(d)));
+  await new Promise((r) => ws.on('open', r));
+  ws.send(JSON.stringify({ t: 'hello', name: 'Deck', platform: 'Steam Deck', protocol: 1, create: true }));
+  await new Promise((r) => setTimeout(r, 300));
+  const good = { name: 'Shrike', tons: 60, walk: 5, jump: 0, hs: 10, armor: [5, 14, 20, 14, 4, 6, 4, 13, 12, 18, 18], weapons: [{ t: 13, loc: 4 }, { t: 13, loc: 5 }, { t: 16, loc: 3 }] };
+  const hacked = { name: 'Godmech', tons: 20, walk: 9, jump: 9, hs: 40, armor: Array(11).fill(99), weapons: Array(16).fill({ t: 3, loc: 2, ammo: 4 }) };
+  ws.send(JSON.stringify({ t: 'lance', side: 0, lance: [{ custom: good }, { custom: hacked }, 'Atlas'] }));
+  await new Promise((r) => setTimeout(r, 300));
+  const lob = got.filter((m) => m.t === 'lobby').pop().lobby;
+  console.log('server-side lance:', lob.slots[0].lance.map((e) => typeof e === 'string' ? e : '*' + e.custom.name).join(', '), '| rejection message:', got.some((m) => m.t === 'error' && /custom design/.test(m.msg)));
+  ws.send(JSON.stringify({ t: 'start' }));
+  await new Promise((r) => setTimeout(r, 500));
+  const st = got.find((m) => m.t === 'start').state;
+  const sh = st.mechs.find((m) => m.design === 'Shrike');
+  console.log('battle has Shrike:', !!sh, sh && `${sh.tons}t walk ${sh.walkBase} weapons ${sh.weapons.map((w) => w.t).join('/')} armour ${sh.armor.reduce((a, b) => a + b, 0)}`);
+  ws.close(); await srv.close(); process.exit(0);
+})();

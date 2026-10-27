@@ -11,11 +11,13 @@ import { initAudio, sfx, music, audioSettings, applyVolumes } from './audio.js';
 import { $, $$, html, esc, FocusNav, promptBar, toast, paperDoll, glyphHTML } from './ui.js';
 import { initTips, tipSettings, hideTip, MANUAL, attr as tipAttr, weaponBlurb, ARMOR_TIP } from './tips.js';
 import { MechPreview } from './preview.js';
+import { showLab, loadDesigns } from './lab.js';
+import { buildTemplate, specFromStock, entryName } from '../core/custom.js';
 import { ICON } from './icons.js';
 import { LocalSession, RemoteSession, wsUrlFor } from './net.js';
 import { native, isCapacitor, servedByHost, secureBrowser, platformName, canHost, canQuit, discover } from './platform.js';
 import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mechBV } from '../core/data.js';
-import { Room, lanceTons, autoLance } from '../core/room.js';
+import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
 import { totalArmor, maxArmor } from '../core/rules.js';
 
 // ------------------------------------------------------------------ boot
@@ -327,6 +329,7 @@ class App {
       { k: 'join', label: 'Join Game', hint: 'Find a host or enter an address', fn: () => this.showJoin() },
       { k: 'hotseat', label: 'Hotseat', hint: 'Pass the controller', fn: () => this.startLocal('hotseat') },
       { k: 'bay', label: 'Mech Bay', hint: `${MECHS.length} original designs`, fn: () => this.showBay(null) },
+      { k: 'lab', label: 'Mech Lab', hint: 'Design your own mechs', fn: () => this.openLab(null, -1, () => this.showTitle()) },
       { k: 'manual', label: 'How to Play', hint: 'Turns, aiming, heat, damage', fn: () => this.showManual() },
       { k: 'settings', label: 'Settings', hint: '', fn: () => this.showSettings(() => this.showTitle()) },
       canQuit ? { k: 'quit', label: 'Quit', hint: '', fn: () => native.quit() } : null,
@@ -436,7 +439,7 @@ class App {
       const tons = lanceTons(sl.lance);
       const card = html(`<div class="slot panel" style="--side:${sl.color}">
         <div class="slot-head"><span class="sw"></span><b>${esc(sl.name)}</b><span class="who">${esc(who)}</span></div>
-        <div class="lance-list">${sl.lance.map((n) => { const m = MECHS.find((x) => x.n === n); return `<div><span>${esc(n)}</span><span class="num faint">${m ? m.t : '?'}t</span></div>`; }).join('') || '<div class="faint">No mechs selected</div>'}</div>
+        <div class="lance-list">${sl.lance.map((e) => `<div><span>${typeof e === 'object' ? '★ ' : ''}${esc(entryName(e))}</span><span class="num faint">${entryTons(e)}t</span></div>`).join('') || '<div class="faint">No mechs selected</div>'}</div>
         <div class="tons-bar ${tons > L.settings.tonnage ? 'over' : ''}"><s style="width:${Math.min(100, tons / L.settings.tonnage * 100)}%"></s></div>
         <div class="dim num" style="font-size:14px">${tons} / ${L.settings.tonnage} tons${remote && sl.ctrl !== 'ai' && sl.ctrl !== 'open' ? ` · <span class="ready-chip ${sl.ready ? 'on' : 'off'}">${sl.ready ? 'Ready' : 'Not ready'}</span>` : ''}</div>
         <div class="stack acts"></div></div>`);
@@ -456,12 +459,22 @@ class App {
   }
 
   // ---- mech bay
-  showBay(edit) {
+  openLab(spec, index, back) {
+    showLab(this, spec, { slotIndex: index, onExit: (why, cur) => {
+      if (why === 'stock') this.showBay(null, { pickStock: (m) => this.openLab(specFromStock(m), -1, back), back: () => this.openLab(cur, index, back) });
+      else back();
+    } });
+  }
+
+  showBay(edit, opts = {}) {
     const prevScreen = this.screen;
-    const st = { cls: edit ? -1 : 0, edit, focus: null };
-    if (st.cls === -1) st.cls = 1;
-    const list = () => MECHS.filter((m) => m.c === st.cls).sort((a, b) => a.t - b.t || a.n.localeCompare(b.n));
+    if (this.bayState && this.bayState.edit === edit) { /* keep tab */ }
+    const st = { cls: edit ? 1 : 0, edit, focus: null };
+    if (opts.startTab !== undefined) st.cls = opts.startTab;
+    const customList = () => loadDesigns().map((spec, idx) => { const b = buildTemplate(spec); return { ...b.template, _spec: b.spec, _idx: idx, _ok: b.ok, _err: b.errors[0] }; });
+    const list = () => st.cls === 4 ? customList() : MECHS.filter((m) => m.c === st.cls).sort((a, b) => a.t - b.t || a.n.localeCompare(b.n));
     const done = () => {
+      if (opts.back) { opts.back(); return; }
       if (edit) { this.session.send({ t: 'lance', side: edit.side, lance: edit.lance }); if (this.session.local === false && this.lobby && this.lobby.slots[edit.side].ctrl === this.session.myId) { /* stays not-ready until confirmed */ } this.showLobby(); }
       else if (prevScreen === 'lobby') this.showLobby();
       else this.showTitle();
@@ -485,8 +498,11 @@ class App {
     };
     const showMech = (m) => {
       const det = $('.detail', this.ui);
-      if (!det || !m) return;
-      $('.vname', det).innerHTML = `<div class="eyebrow">${CLASS_NAMES[m.c]} · ${m.t} tons</div><h2>${esc(m.n)}</h2>`;
+      if (!det) return;
+      if (!m) { $('.vname', det).innerHTML = st.cls === 4 ? '<div class="eyebrow">Mech Lab</div><h2>New design</h2>' : ''; $('.info', det).innerHTML = st.cls === 4 ? '<p class="brief">Build your own mech: pick a tonnage, engine speed, armour and any of the 17 weapons. Designs are saved on this device and work in every mode, including online — the host checks them against the same construction rules.</p>' : ''; $('.vcustom', det).classList.add('hidden'); return; }
+      $('.vname', det).innerHTML = `<div class="eyebrow">${m.custom ? '★ Custom · ' : ''}${CLASS_NAMES[m.c]} · ${m.t} tons</div><h2>${esc(m.n)}</h2>${m.custom && !m._ok ? `<div class="bad-chip">${esc(m._err || 'Not battle-ready')}</div>` : ''}`;
+      const vc = $('.vcustom', det); vc.classList.remove('hidden'); vc.innerHTML = `${ICON.mech} ${m.custom ? 'Edit in Mech Lab' : 'Customise in Mech Lab'}`;
+      vc.onclick = (e) => { e.stopPropagation(); this.openBayLab(m, edit, opts); };
       $('.vjump', det).classList.toggle('hidden', !m.j);
       $('.info', det).innerHTML = info(m);
       const pv = this.preview;
@@ -511,20 +527,31 @@ class App {
       const tons = edit ? lanceTons(edit.lance) : 0;
       const el = html(`<div class="screen">
         <div class="screen-head"><div><div class="eyebrow">${edit ? 'Choose your lance' : 'Mech Bay'}</div><h2>${edit ? `${esc(this.lobby.slots[edit.side].name)}` : 'Original MechForce designs'}</h2></div><div class="spacer"></div>
-          <div class="tabs">${CLASS_NAMES.map((c, i) => `<div class="tab ${i === st.cls ? 'on' : ''}" data-c="${i}">${c} ${MECHS.filter((m) => m.c === i).length}</div>`).join('')}</div></div>
-        ${edit ? `<div class="lance-tray"><span class="eyebrow">Lance</span>${edit.lance.map((n, i) => `<span class="chip">${esc(n)}</span>`).join('') || '<span class="faint">Empty — add up to ' + edit.max + '</span>'}
+          <div class="tabs">${CLASS_NAMES.map((c, i) => `<div class="tab ${i === st.cls ? 'on' : ''}" data-c="${i}">${c} ${MECHS.filter((m) => m.c === i).length}</div>`).join('')}${opts.pickStock ? '' : `<div class="tab ${st.cls === 4 ? 'on' : ''}" data-c="4">★ Custom ${loadDesigns().length}</div>`}</div></div>
+        ${opts.pickStock ? '<div class="lance-tray"><span class="eyebrow">Pick a stock design to start from</span></div>' : ''}
+        ${edit ? `<div class="lance-tray"><span class="eyebrow">Lance</span>${edit.lance.map((n) => `<span class="chip">${typeof n === 'object' ? '★ ' : ''}${esc(entryName(n))}</span>`).join('') || '<span class="faint">Empty — add up to ' + edit.max + '</span>'}
           <span class="num ${tons > edit.limit ? '' : 'dim'}" style="margin-left:auto;${tons > edit.limit ? 'color:var(--red)' : ''}">${tons} / ${edit.limit}t</span></div>` : ''}
         <div class="screen-body bay"><div class="panel scroll list"></div><div class="panel detail scroll">
           <div class="viewer"><div class="vname"></div>
-            <div class="vbtns"><button class="vb" data-v="walk">${ICON.walk} Walk</button><button class="vb vjump" data-v="jump">${ICON.jump} Jump</button><button class="vb" data-v="fire">${ICON.target} Fire all</button></div>
+            <div class="vbtns"><button class="vb" data-v="walk">${ICON.walk} Walk</button><button class="vb vjump" data-v="jump">${ICON.jump} Jump</button><button class="vb" data-v="fire">${ICON.target} Fire all</button><button class="vb vcustom hidden"></button></div>
             <div class="vhint">Drag to rotate · tap to pause spin</div></div>
           <div class="info"></div></div></div></div>`);
       $$('.tab', el).forEach((t) => t.addEventListener('click', () => { st.cls = +t.dataset.c; render(); }));
       const lst = $('.list', el);
+      if (st.cls === 4) {
+        const nw = html(`<div class="mech-row nav newrow" data-key="__new"><span class="n">${ICON.mech} New design…</span><span></span><span></span><span></span></div>`);
+        nw.addEventListener('click', () => this.openBayLab(null, edit, opts));
+        lst.appendChild(nw);
+      }
       for (const m of mechs) {
-        const count = edit ? edit.lance.filter((n) => n === m.n).length : 0;
-        const row = html(`<div class="mech-row nav" data-key="${esc(m.n)}"><span class="n">${esc(m.n)}${count ? ` <span class="in">×${count}</span>` : ''}</span><span class="num dim">${m.t}t</span><span class="num faint">${m.w}/${Math.ceil(m.w * 1.5)}/${m.j}</span><span class="num faint">${m.wp.length}w</span></div>`);
-        row.addEventListener('click', () => { if (edit) add(m); });
+        const key = m.custom ? '__c' + m._idx : m.n;
+        const count = edit ? edit.lance.filter((n) => (m.custom ? typeof n === 'object' && n.custom.name === m.n : n === m.n)).length : 0;
+        const row = html(`<div class="mech-row nav ${m.custom && !m._ok ? 'invalid' : ''}" data-key="${esc(key)}"><span class="n">${m.custom ? '★ ' : ''}${esc(m.n)}${count ? ` <span class="in">×${count}</span>` : ''}${m.custom && !m._ok ? ' <span class="warn">⚠</span>' : ''}</span><span class="num dim">${m.t}t</span><span class="num faint">${m.w}/${Math.ceil(m.w * 1.5)}/${m.j}</span><span class="num faint">${m.wp.length}w</span></div>`);
+        row._mech = m;
+        row.addEventListener('click', () => {
+          if (opts.pickStock) { opts.pickStock(m); return; }
+          if (edit) add(m); else if (m.custom) this.openBayLab(m, edit, opts);
+        });
         lst.appendChild(row);
       }
       this.mount(el, edit ? [{ a: 'confirm', label: 'Add' }, { a: 'x', label: 'Remove last' }, { a: 'y', label: 'Random lance' }, { a: 'view', label: 'Fire all' }, { a: 'rb', label: 'Class' }, { a: 'back', label: 'Done' }]
@@ -532,17 +559,18 @@ class App {
       if (!this.preview) this.preview = new MechPreview();
       this.preview.attach($('.viewer', el));
       $$('.vb', el).forEach((bt) => bt.addEventListener('click', (e) => { e.stopPropagation(); const v = bt.dataset.v; if (v === 'fire') salvo(); else this.preview.setMode(v); sfx('ui-move'); }));
-      this.nav.onChange = (row) => { const key = row ? row.dataset.key : null; if (key === st.focus && this.preview.tpl && this.preview.tpl.n === key) return; st.focus = key; showMech(MECHS.find((x) => x.n === st.focus)); };
+      this.nav.onChange = (row) => { const key = row ? row.dataset.key : null; if (key === st.focus && this.preview.tpl && row && row._mech === this.bayShown) return; st.focus = key; this.bayShown = row ? row._mech : null; showMech(row ? row._mech : null); };
       if (st.focus) { const r = $$('.mech-row', el).find((x) => x.dataset.key === st.focus); if (r) this.nav.set(r, false); }
       this.nav.onChange(this.nav.cur);
     };
     const add = (m) => {
+      if (m.custom && !m._ok) { toast(`${m.n} isn't battle-ready yet: ${m._err}`); return; }
       if (edit.lance.length >= edit.max) { toast(`A lance holds ${edit.max} mech${edit.max > 1 ? 's' : ''}. Remove one first.`); return; }
       if (lanceTons(edit.lance) + m.t > edit.limit) { toast(`${m.n} would put you over ${edit.limit} tons.`); return; }
-      edit.lance.push(m.n); sfx('ui-ok'); render();
+      edit.lance.push(m.custom ? { custom: m._spec } : m.n); sfx('ui-ok'); render();
     };
     const act = (a) => {
-      if (a === 'lb' || a === 'rb') { st.cls = (st.cls + (a === 'rb' ? 1 : 3)) % 4; st.focus = null; sfx('ui-move'); render(); return true; }
+      if (a === 'lb' || a === 'rb') { const n = opts.pickStock ? 4 : 5; st.cls = (st.cls + (a === 'rb' ? 1 : n - 1)) % n; st.focus = null; sfx('ui-move'); render(); return true; }
       if (a === 'view' || (!edit && a === 'x')) { salvo(); return true; }
       if (!edit && a === 'y') { this.preview.setMode(this.preview.mode === 'walk' && this.preview.tpl.j ? 'jump' : 'walk'); return true; }
       if (!edit) return false;
@@ -552,7 +580,15 @@ class App {
       return false;
     };
     this.nav.onChange = null;
+    this.bayRender = render;
     this.setScreen('bay', render, act, done);
+  }
+
+  openBayLab(m, edit, opts) {
+    const back = () => this.showBay(edit, { ...opts, startTab: 4 });
+    if (!m) this.openLab(null, -1, back);
+    else if (m.custom) this.openLab(m._spec, m._idx, back);
+    else this.openLab(specFromStock(m), -1, () => this.showBay(edit, { ...opts, startTab: 4 }));
   }
 
   // ---- join

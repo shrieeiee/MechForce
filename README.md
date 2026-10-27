@@ -21,6 +21,10 @@ Downloads are on the [Releases](../../releases) page. Every push builds all four
 - **All mission orders** with both sides' briefings, word for word: Search & Destroy, Crossing, Hold Position (500 seconds), Find the DataPack, Recover the Memory Cell, Escort the Pepsi, Destroy the Spy, Scouting Run.
 - **The six digitised sounds** (Laser, Cannon, MachineGun, Rocket, Flamer, Crunch), selectable in Settings → Weapon sounds → Original Amiga.
 
+## Mech Lab
+
+Design custom mechs (title screen → Mech Lab, or the ★ Custom tab in the Mech Bay): tonnage 20–100, engine speed, jump jets, heat sinks, armour and up to 16 of the 17 weapon types, with a live tonnage budget, critical-slot map and 3D model. Designs are stored on the device and travel with your lance; the host rebuilds and validates every custom mech (`src/core/custom.js`), so tampered designs are rejected.
+
 ## Rules in brief
 
 Initiative each round; sides alternate activating one mech at a time. Walk / run / jump with facing and terrain costs (woods, rough, water, elevation). 2d6 to-hit with range, movement, cover, heat and damage modifiers. Hit locations by attack direction (front, sides, rear armour), damage transfer, critical hits from the real crit tables (ammo explosions, engine, gyro, actuators, cockpit, sensors, heat sinks, jump jets), heat with shutdown and ammo cook-off, falls, pilot injuries and consciousness rolls, punches and kicks. Each round is 50 seconds, as in the original's "500 seconds".

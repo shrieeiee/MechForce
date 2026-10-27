@@ -3,6 +3,7 @@
 import { MECHS, WEAPONS, MISSIONS, TERRAIN, ZONE_LOC, FRONT_ZONE, REAR_ZONE, TRANSFER, LOC_NAMES, critName,
   SIDE_COLORS, SIDE_NAMES, PILOT_NAMES, mechByName } from './data.js';
 import { generateMap, deployZone, inMap } from './map.js';
+import { buildTemplate } from './custom.js';
 import { neighbor, distance, relBearing, line, facingToward, turnCost, center } from './hex.js';
 import { nextRand, roll2d6, d6, hashSeed, chance } from './rng.js';
 
@@ -30,8 +31,11 @@ export function createGame(setup) {
     const zone = deployZone(map, s, nSides);
     const lance = (sd.lance || []).slice(0, 4);
     lance.forEach((entry, i) => {
-      const design = typeof entry === 'string' ? entry : entry.design;
-      const tpl = mechByName(design) || MECHS[0];
+      let tpl;
+      if (entry && typeof entry === 'object' && entry.custom) {
+        const b = buildTemplate(entry.custom);
+        tpl = b.ok ? b.template : MECHS[0];
+      } else tpl = mechByName(typeof entry === 'string' ? entry : entry.design) || MECHS[0];
       const pos = zone[i * 2 % zone.length] || zone[0];
       const pilot = (typeof entry === 'object' && entry.pilot) || PILOT_NAMES[(pilotIx++) % PILOT_NAMES.length];
       const f = s === 0 ? 0 : s === 1 ? 3 : s === 2 ? 5 : 1;
@@ -72,7 +76,7 @@ function makeMech(id, side, tpl, pilot, x, y, f, sd) {
       loc: w[7], slot: w[8], aloc: w[9], aslot: w[10], ok: true, i };
   });
   return {
-    id, side, design: tpl.n, cls: tpl.c, tons: tpl.t, pilot: { name: pilot, gun: sd.gunnery, pil: sd.piloting, hits: 0, ko: false },
+    id, side, design: tpl.n, custom: !!tpl.custom, cls: tpl.c, tons: tpl.t, pilot: { name: pilot, gun: sd.gunnery, pil: sd.piloting, hits: 0, ko: false },
     x, y, f, armor: tpl.a.slice(), armorMax: tpl.a.slice(), internal: tpl.i.slice(), internalMax: tpl.i.slice(),
     crit: tpl.cr.map((r) => r.slice()), critHit: tpl.cr.map((r) => r.map(() => 0)),
     weapons, heat: 0, hs: tpl.hs, hsLost: 0, walkBase: tpl.w, jumpBase: tpl.j, jumpLost: 0,

@@ -250,6 +250,11 @@ export const MANUAL = [
     <p>Once structure is hit, <b>critical hits</b> can knock out weapons, ammo (which may explode), heat sinks, jump jets, the engine, gyro, sensors or cockpit.</p>
     <p>Lose an arm and its weapons go with it. Lose a leg and you fall and crawl. Lose the head or center torso and the mech is destroyed. Taking 20+ damage in one volley can knock a mech over.</p>
     <p>Pilots can be injured and knocked out; six injuries are fatal.</p>` },
+  { k: 'lab', t: 'Mech Lab', body: `
+    <p>Design your own mechs from the title screen (<b>Mech Lab</b>) or the <b>★ Custom</b> tab in the Mech Bay. You can also press <b>Customise</b> on any original design to start from it.</p>
+    <p>Every part has weight: structure (10% of tonnage), the engine (tonnage × walking speed — fast heavy mechs need huge engines), gyro, cockpit, extra heat sinks, jump jets, armour (16 points per ton), weapons and ammo. The total can't go over the chassis tonnage.</p>
+    <p>Each body location also has limited <b>critical slots</b>. The slot map under the model shows what's where; a weapon that doesn't fit has to move.</p>
+    <p>Designs are saved on this device. They work in skirmish, hotseat and online games: the host rebuilds every custom mech with the same rules, so designs can't be tampered with.</p>` },
   { k: 'controls', t: 'Controls', body: `
     <table class="tt"><tr><td>Move cursor</td><td>Left stick / d-pad · WASD / arrows · mouse · tap</td></tr>
     <tr><td>Confirm</td><td>A / ✕ · Enter · click · tap again</td></tr>

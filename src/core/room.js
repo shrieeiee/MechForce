@@ -3,6 +3,7 @@
 import { createGame, applyCommand, activeSide } from './rules.js';
 import { aiNextCommand } from './ai.js';
 import { MECHS, MISSIONS, PROTOCOL, VERSION, SIDE_NAMES, SIDE_COLORS, mechBV } from './data.js';
+import { buildTemplate } from './custom.js';
 
 let nextClient = 1;
 const rid = () => Math.random().toString(36).slice(2, 10);
@@ -33,8 +34,21 @@ export function autoLance(seed, maxTons, count = 4) {
   return (best ? best.lance : [pool[0]]).map((m) => m.n);
 }
 
+export function entryTons(e) {
+  if (e && typeof e === 'object' && e.custom) return buildTemplate(e.custom).template.t;
+  return MECHS.find((m) => m.n === e)?.t || 0;
+}
 export function lanceTons(lance) {
-  return lance.reduce((s, n) => s + (MECHS.find((m) => m.n === n)?.t || 0), 0);
+  return lance.reduce((s, e) => s + entryTons(e), 0);
+}
+// Accept stock names, or custom designs that pass validation (rebuilt here, never trusted)
+export function cleanLance(list, max) {
+  const out = [];
+  for (const e of (list || []).slice(0, max)) {
+    if (typeof e === 'string') { if (MECHS.some((m) => m.n === e)) out.push(e); continue; }
+    if (e && typeof e === 'object' && e.custom) { const b = buildTemplate(e.custom); if (b.ok) out.push({ custom: b.spec }); }
+  }
+  return out;
 }
 
 export class Room {
@@ -155,7 +169,8 @@ export class Room {
         const sl = this.slots[msg.side];
         if (!sl || this.game) return;
         if (sl.ctrl !== id && !(isHost && sl.ctrl === 'ai')) return err('Not your slot');
-        const lance = (msg.lance || []).filter((n) => MECHS.some((m) => m.n === n)).slice(0, this.settings.lanceSize);
+        const lance = cleanLance(msg.lance, this.settings.lanceSize);
+        if ((msg.lance || []).length && lance.length < Math.min((msg.lance || []).length, this.settings.lanceSize)) this.send(id, { t: 'error', msg: 'A custom design was rejected because it breaks the construction rules.' });
         sl.lance = lance; sl.ready = false;
         if (msg.name) sl.name = String(msg.name).slice(0, 18);
         return this.pushLobby();
