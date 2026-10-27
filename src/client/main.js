@@ -9,6 +9,8 @@ import { Battle } from './battle.js';
 import { input, pollInput, glyph } from './input.js';
 import { initAudio, sfx, music, audioSettings, applyVolumes } from './audio.js';
 import { $, $$, html, esc, FocusNav, promptBar, toast, paperDoll, glyphHTML } from './ui.js';
+import { initTips, tipSettings, hideTip, MANUAL } from './tips.js';
+import { ICON } from './icons.js';
 import { LocalSession, RemoteSession, wsUrlFor } from './net.js';
 import { native, isCapacitor, servedByHost, secureBrowser, platformName, canHost, canQuit, discover } from './platform.js';
 import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mechBV } from '../core/data.js';
@@ -26,7 +28,7 @@ style.textContent = `
 ` + css;
 document.head.appendChild(style);
 
-const DEFAULTS = { name: '', quality: isCapacitor ? 'medium' : 'high', speed: 1, camSpeed: 1, sfx: 0.8, music: 0.4, sound: 'modern', glyphs: 'auto', lastServer: '', lastRoom: '', tonnage: 200 };
+const DEFAULTS = { name: '', quality: isCapacitor ? 'medium' : 'high', speed: 1, camSpeed: 1, sfx: 0.8, music: 0.4, sound: 'modern', glyphs: 'auto', tips: true, lastServer: '', lastRoom: '', tonnage: 200 };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('mechforce.settings') || '{}') }; } catch { return { ...DEFAULTS }; }
 }
@@ -46,6 +48,7 @@ class App {
     this.lobby = null;
     this.modal = null;
     this.bindPointer();
+    initTips();
     input.on((a) => this.onAction(a));
     window.addEventListener('mf-device', () => this.rerenderPrompts());
     window.addEventListener('pointerdown', () => initAudio(), { once: false });
@@ -73,6 +76,7 @@ class App {
     this.renderer.camSpeed = s.camSpeed;
     audioSettings.sfx = s.sfx; audioSettings.music = s.music; audioSettings.style = s.sound;
     input.forcedGlyphs = s.glyphs;
+    tipSettings.on = s.tips !== false;
     document.documentElement.dataset.device = s.glyphs !== 'auto' ? s.glyphs : input.device;
     applyVolumes();
   }
@@ -80,6 +84,8 @@ class App {
   // ------------------------------------------------------------ input routing
   onAction(a) {
     initAudio();
+    if (a === 'help') { if (this.modal && this.modal.manual) this.closeModal(); else this.showManual(); return; }
+    if (a !== 'up' && a !== 'down' && a !== 'left' && a !== 'right') hideTip();
     if (this.modal) return this.modalAction(a);
     if (this.screen === 'battle') { if (this.battle.onAction(a)) return; return; }
     if (this.screenAction && this.screenAction(a) === true) return;
@@ -89,6 +95,8 @@ class App {
   }
   modalAction(a) {
     const m = this.modal;
+    if (m.onTab && (a === 'lb' || a === 'rb' || a === 'left' || a === 'right')) { m.onTab(a === 'rb' || a === 'right' ? 1 : -1); return; }
+    if (m.manual && (a === 'up' || a === 'down')) { const b = $('.man-body', m.el); if (b) b.scrollBy({ top: a === 'down' ? 120 : -120, behavior: 'smooth' }); return; }
     if (['up', 'down', 'left', 'right'].includes(a)) { m.nav.move(a); return; }
     if (a === 'confirm') { if (m.nav.activate()) sfx('ui-ok'); return; }
     if ((a === 'back' || (a === 'menu' && m.menuCloses)) && m.onBack) { sfx('ui-back'); m.onBack(); }
@@ -183,7 +191,23 @@ class App {
     nav.attach(el);
     this.modal = { el: bg, nav, onBack, menuCloses, prompts };
   }
-  closeModal() { if (this.modal) { this.modal.el.remove(); this.modal = null; } }
+  closeModal() { if (this.modal) { this.modal.el.remove(); const after = this.modal.after; this.modal = null; hideTip(); if (after) after(); } }
+
+  // ---- field manual
+  showManual(startKey) {
+    let idx = Math.max(0, MANUAL.findIndex((m) => m.k === startKey));
+    const el = html(`<div class="modal wide panel manual"><div class="eyebrow">${ICON.help} Field manual</div>
+      <div class="tabs man-tabs"></div><div class="man-body scroll"></div></div>`);
+    const paint = () => {
+      $('.man-tabs', el).innerHTML = MANUAL.map((m, i) => `<div class="tab ${i === idx ? 'on' : ''}" data-i="${i}">${esc(m.t)}</div>`).join('');
+      $$('.tab', el).forEach((t) => t.addEventListener('click', () => { idx = +t.dataset.i; paint(); }));
+      $('.man-body', el).innerHTML = `<h2>${esc(MANUAL[idx].t)}</h2>${MANUAL[idx].body}`;
+    };
+    paint();
+    this.openModal(el, { onBack: () => this.closeModal(), prompts: [{ a: 'rb', label: 'Next page' }, { a: 'lb', label: 'Previous' }, { a: 'back', label: 'Close' }] });
+    this.modal.manual = true;
+    this.modal.onTab = (d) => { idx = (idx + d + MANUAL.length) % MANUAL.length; paint(); sfx('ui-move'); };
+  }
 
   // ------------------------------------------------------------ sessions
   endSession() {
@@ -300,6 +324,7 @@ class App {
       { k: 'join', label: 'Join Game', hint: 'Find a host or enter an address', fn: () => this.showJoin() },
       { k: 'hotseat', label: 'Hotseat', hint: 'Pass the controller', fn: () => this.startLocal('hotseat') },
       { k: 'bay', label: 'Mech Bay', hint: `${MECHS.length} original designs`, fn: () => this.showBay(null) },
+      { k: 'manual', label: 'How to Play', hint: 'Turns, aiming, heat, damage', fn: () => this.showManual() },
       { k: 'settings', label: 'Settings', hint: '', fn: () => this.showSettings(() => this.showTitle()) },
       canQuit ? { k: 'quit', label: 'Quit', hint: '', fn: () => native.quit() } : null,
     ].filter(Boolean);
@@ -560,6 +585,7 @@ class App {
       { k: 'sfx', label: 'Sound effects', opts: [0, 0.2, 0.4, 0.6, 0.8, 1], fmt: (v) => Math.round(v * 10) + '/10' },
       { k: 'music', label: 'Music', opts: [0, 0.2, 0.4, 0.6, 0.8, 1], fmt: (v) => Math.round(v * 10) + '/10' },
       { k: 'sound', label: 'Weapon sounds', opts: ['modern', 'amiga', 'both'], fmt: (v) => ({ modern: 'Modern', amiga: 'Original Amiga', both: 'Both' }[v]) },
+      { k: 'tips', label: 'Tooltips & hints', opts: [true, false], fmt: (v) => (v ? 'On' : 'Off') },
       { k: 'glyphs', label: 'Button prompts', opts: ['auto', 'xbox', 'ps', 'kb'], fmt: (v) => ({ auto: 'Automatic', xbox: 'Xbox / Steam Deck', ps: 'PlayStation', kb: 'Keyboard' }[v]) },
     ];
     const change = (k, dir) => {
@@ -609,12 +635,14 @@ class App {
     const el = html(`<div class="modal panel"><div class="eyebrow">Paused${this.session && !this.session.local ? ' · the battle keeps running' : ''}</div><h2>Menu</h2>
       <div class="stack">
         <div class="btn nav" data-key="resume">Resume</div>
+        <div class="btn nav" data-key="manual">How to play</div>
         <div class="btn nav" data-key="log">Battle log</div>
         <div class="btn nav" data-key="settings">Settings</div>
         ${mineAlive && !st.over ? '<div class="btn nav" data-key="concede">Withdraw from battle</div>' : ''}
         <div class="btn nav" data-key="quit">Quit to title</div></div></div>`);
     const close = () => this.closeModal();
     $('[data-key=resume]', el).addEventListener('click', close);
+    $('[data-key=manual]', el).addEventListener('click', () => { this.closeModal(); this.showManual(); });
     $('[data-key=log]', el).addEventListener('click', () => {
       const log = html(`<div class="modal wide panel"><div class="eyebrow">Battle log</div><div class="scroll" style="max-height:60vh;font-size:15px;line-height:1.45">${st.log.map((l) => `<div>${esc(l)}</div>`).join('')}</div><div class="btn nav" data-key="ok">Close</div></div>`);
       $('[data-key=ok]', log).addEventListener('click', () => this.closeModal());

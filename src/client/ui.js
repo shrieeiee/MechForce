@@ -30,6 +30,7 @@ export class FocusNav {
     if (this.cur) this.cur.classList.remove('focus');
     this.cur = el;
     if (el) { el.classList.add('focus'); el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); if (sound) sfx('ui-move'); }
+    window.dispatchEvent(new CustomEvent('mf-focus', { detail: { el, fromNav: sound } }));
     if (this.onChange) this.onChange(el);
   }
   move(dir) {
