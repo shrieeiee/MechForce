@@ -1,7 +1,7 @@
 import { MECHS } from './mechdata.js';
 export { MECHS };
 
-export const VERSION = '1.6.0';
+export const VERSION = '1.7.0';
 export const PROTOCOL = 2;
 
 // Weapon types, in the original program's order.

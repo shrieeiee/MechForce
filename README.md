@@ -8,7 +8,7 @@ Turn-based hex tactics with console-style 3D graphics, full controller support, 
 | Windows | `MechForce-…-Windows-Setup.exe` / `…-Portable.exe` | Xbox/PS pads, keyboard + mouse |
 | Steam Deck / Linux | `MechForce-…-Linux-SteamDeck.AppImage` | Deck controls, touchscreen |
 | Android | `MechForce-Android.apk` | Touch, Bluetooth/USB controllers |
-| Browser | served by any host, or `MechForce-Browser.html` | Gamepad API, keyboard + mouse, touch |
+| Browser | **[play now](https://shrieeiee.github.io/MechForce/)**, or served by any host, or `MechForce-Browser.html` | Gamepad API, keyboard + mouse, touch |
 
 Downloads are on the [Releases](../../releases) page. Every push builds all four in GitHub Actions.
 
@@ -35,9 +35,10 @@ Every mission supports 2–4 forces, each a player (local hotseat or online) or 
 
 ## Crossplay
 
-All platforms run the same engine and talk the same JSON protocol over WebSocket, so any mix can play together.
+All platforms run the same engine and talk the same JSON protocol, so any mix can play together.
 
-- **Home network:** on Windows or Steam Deck choose **Host LAN Game**. Other desktop apps find it automatically (UDP beacon on port 7374). Android scans your Wi-Fi subnet. Any phone, tablet or PC browser can open the `http://<host-ip>:7373` address shown in the lobby.
+- **Online, from anywhere (including the web version):** choose **Host Online**. You get a five-letter code and an invite link (`https://shrieeiee.github.io/MechForce/?join=CODE`). Friends choose **Join Game** and enter the code, or open the link. The host's device runs the game and players connect to it directly over WebRTC; the free PeerJS cloud only introduces them. Keep the host open while playing. If a strict network (some mobile carriers, corporate Wi-Fi) blocks direct connections, add a TURN relay under Settings → Online play (`turn:user:password@host:3478`). A self-hosted PeerJS server can also be set there; everyone must use the same one.
+- **Home network:** on Windows or Steam Deck choose **Host LAN Server**. Other desktop apps find it automatically (UDP beacon on port 7374). Android scans your Wi-Fi subnet. Any phone, tablet or PC browser can open the `http://<host-ip>:7373` address shown in the lobby.
 - **Internet / always-on server:** `node dist/server.cjs --port 7373` on any machine (Raspberry Pi, VPS, NAS). Players use **Join Game** with its address and **Create new room**, then share the 4-letter room code. Put it behind a TLS proxy (e.g. Caddy) to give browsers a `wss://` address.
 - Players who drop out reconnect into the same seat automatically.
 - Allow MechForce through the Windows firewall when it asks (TCP 7373, UDP 7374).

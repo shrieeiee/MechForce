@@ -9,6 +9,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   web:
@@ -30,6 +32,12 @@ jobs:
           printf 'Run: node server.cjs --port 7373\nThen open http://<this-machine-ip>:7373 in any browser, or use Join Game in the apps.\n' > out/MechForce-Server/README.txt
           cd out && zip -qr MechForce-Server-and-Web.zip MechForce-Server
           cp ../dist/artifact/mechforce.html MechForce-Browser.html
+      - name: Prepare GitHub Pages site
+        run: |
+          mkdir -p pages && cp dist/web/index.html pages/index.html && touch pages/.nojekyll
+          cp pages/index.html pages/404.html
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: pages }
       - uses: actions/upload-artifact@v4
         with:
           name: MechForce-Web-and-Server
@@ -99,6 +107,20 @@ jobs:
           name: MechForce-Android
           path: MechForce-Android.apk
 
+  pages:
+    name: Publish web version (GitHub Pages)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [web]
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    environment: { name: github-pages, url: '${{ steps.deploy.outputs.page_url }}' }
+    steps:
+      - uses: actions/configure-pages@v5
+        with: { enablement: true }
+        continue-on-error: true
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
   release:
     name: Publish release
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
@@ -110,8 +132,8 @@ jobs:
       - run: find artifacts -type f | sort
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.6.{0}', github.run_number) }}
-          name: MechForce ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.6.{0}', github.run_number) }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.7.{0}', github.run_number) }}
+          name: MechForce ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.7.{0}', github.run_number) }}
           make_latest: true
           files: |
             artifacts/**/*.exe
@@ -127,4 +149,6 @@ jobs:
             - **Android:** `MechForce-Android.apk` (sideload)
             - **Browser / dedicated server:** `MechForce-Server-and-Web.zip`, or `MechForce-Browser.html` for offline single player
 
-            All versions crossplay: host from the Windows or Steam Deck app (Host LAN Game) and everyone else uses Join Game.
+            **Play in your browser:** https://shrieeiee.github.io/MechForce/
+
+            All versions crossplay. **Host Online** on any version (web included) gives a code friends enter in Join Game, or an invite link. Windows / Steam Deck can also **Host LAN Server**.

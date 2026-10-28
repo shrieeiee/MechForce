@@ -505,3 +505,7 @@ table.tt td { padding: 2px 8px 2px 0; vertical-align: top; } table.tt td:first-c
 .tr-team { font-style: normal; font-size: 10px; margin-left: 5px; padding: 0 4px; border: 1px solid currentColor; color: var(--ink-dim); letter-spacing: 0.06em; }
 .results-table tr.won td:first-child::before { content: '★ '; color: var(--amber); }
 .tracker { max-width: min(760px, 56vw); } .tr-side { padding: 4px 8px 5px; }
+.share .code-inline { font-size: 22px; letter-spacing: 0.18em; color: var(--amber); }
+.sharelink { display: flex; gap: 6px; }
+.sharelink input { flex: 1; min-width: 0; background: #0d1318; border: 1px solid var(--line); color: var(--ink); font: inherit; font-size: 14px; padding: 8px 10px; }
+.ok-t { color: var(--green); }

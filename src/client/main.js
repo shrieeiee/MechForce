@@ -14,7 +14,10 @@ import { MechPreview } from './preview.js';
 import { showLab, loadDesigns } from './lab.js';
 import { buildTemplate, specFromStock, entryName } from '../core/custom.js';
 import { ICON } from './icons.js';
-import { LocalSession, RemoteSession, wsUrlFor } from './net.js';
+import { LocalSession, RemoteSession, wsUrlFor, PeerHostSession, PeerClientSession } from './net.js';
+
+export const IS_ARTIFACT = typeof __MF_ARTIFACT__ !== 'undefined' && __MF_ARTIFACT__;
+export const PUBLIC_URL = 'https://shrieeiee.github.io/MechForce/';
 import { native, isCapacitor, servedByHost, secureBrowser, platformName, canHost, canQuit, discover } from './platform.js';
 import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mechBV } from '../core/data.js';
 import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
@@ -31,7 +34,7 @@ style.textContent = `
 ` + css;
 document.head.appendChild(style);
 
-const DEFAULTS = { name: '', quality: isCapacitor ? 'medium' : 'high', speed: 1, camSpeed: 1, sfx: 0.8, music: 0.4, sound: 'modern', glyphs: 'auto', tips: true, lastServer: '', lastRoom: '', tonnage: 200 };
+const DEFAULTS = { name: '', quality: isCapacitor ? 'medium' : 'high', speed: 1, camSpeed: 1, sfx: 0.8, music: 0.4, sound: 'modern', glyphs: 'auto', tips: true, turn: '', signal: '', lastServer: '', lastRoom: '', tonnage: 200 };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('mechforce.settings') || '{}') }; } catch { return { ...DEFAULTS }; }
 }
@@ -67,7 +70,9 @@ class App {
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
-    if (servedByHost && location.port === '7373') this.autoJoinHost();
+    const joinCode = (() => { try { return new URLSearchParams(location.search).get('join'); } catch { return null; } })();
+    if (joinCode && !IS_ARTIFACT) { this.startAttract(); this.joinOnline(joinCode); }
+    else if (servedByHost && location.port === '7373') this.autoJoinHost();
     else this.showTitle();
   }
 
@@ -218,6 +223,7 @@ class App {
   endSession() {
     if (this.session) { this.session.close(); this.session = null; }
     if (this.hosting && native) { native.hostStop?.(); this.hosting = null; }
+    if (this.wakeLock) { try { this.wakeLock.release(); } catch {} this.wakeLock = null; }
     this.battle.stop();
     this.lobby = null;
   }
@@ -250,6 +256,7 @@ class App {
         if (msg.status === 'reconnecting') toast('Connection lost — reconnecting…');
         if (msg.status === 'online' && this.wasOnline) toast('Reconnected', true);
         if (msg.status === 'online') this.wasOnline = true;
+        if (this.screen === 'lobby' && this.session && this.session.peerHost) this.renderScreen();
         break;
       default: break;
     }
@@ -292,6 +299,40 @@ class App {
     toast('Connecting to ' + address + '…', true);
   }
 
+  peerCfg() { return { turn: this.settings.turn, signal: this.settings.signal || (localStorage.getItem('mechforce.signal') || '') }; }
+
+  hostOnline() {
+    if (IS_ARTIFACT) { this.onlineOnlyElsewhere(); return; }
+    this.endSession();
+    const sess = new PeerHostSession({ name: this.settings.name, platform: platformName(), cfg: this.peerCfg() });
+    this.attachSession(sess);
+    this.localKind = 'peerhost';
+    this.wasOnline = false;
+    try { navigator.wakeLock && navigator.wakeLock.request('screen').then((l) => { this.wakeLock = l; }).catch(() => {}); } catch {}
+  }
+
+  joinOnline(code) {
+    if (IS_ARTIFACT) { this.onlineOnlyElsewhere(); return; }
+    const c = String(code || '').toUpperCase().replace(/[^A-Z]/g, '');
+    if (c.length < 4) { toast('Enter the code shown on the host\'s screen.'); return; }
+    this.endSession();
+    this.settings.lastRoom = c; this.saveSettings();
+    const sess = new PeerClientSession(c, { name: this.settings.name, platform: platformName(), cfg: this.peerCfg() });
+    this.attachSession(sess);
+    this.localKind = 'peer';
+    this.wasOnline = false;
+    toast(`Connecting to game ${c}…`, true);
+  }
+
+  onlineOnlyElsewhere() {
+    const el = html(`<div class="modal panel"><div class="eyebrow">Online play</div><h2>Open the full web version</h2>
+      <p class="brief">This preview can't make network connections. The public web version can host and join online games with friends on any device:</p>
+      <p><a class="btn primary nav" data-key="go" href="${PUBLIC_URL}" target="_blank" rel="noopener">${PUBLIC_URL}</a></p>
+      <div class="btn nav" data-key="close">Close</div></div>`);
+    $('[data-key=close]', el).addEventListener('click', () => this.closeModal());
+    this.openModal(el, { onBack: () => this.closeModal() });
+  }
+
   autoJoinHost() {
     this.startAttract();
     this.joinRemote(location.host, new URLSearchParams(location.search).get('room') || '');
@@ -325,7 +366,8 @@ class App {
     music('menu');
     const items = [
       { k: 'skirmish', label: 'Skirmish', hint: 'You vs the computer', fn: () => this.startLocal('skirmish') },
-      canHost ? { k: 'host', label: 'Host LAN Game', hint: 'Crossplay on your network', fn: () => this.hostLan() } : null,
+      { k: 'hostp2p', label: 'Host Online', hint: 'Friends join with a code', fn: () => this.hostOnline() },
+      canHost ? { k: 'host', label: 'Host LAN Server', hint: 'This PC hosts your network', fn: () => this.hostLan() } : null,
       { k: 'join', label: 'Join Game', hint: 'Find a host or enter an address', fn: () => this.showJoin() },
       { k: 'hotseat', label: 'Hotseat', hint: 'Pass the controller', fn: () => this.startLocal('hotseat') },
       { k: 'bay', label: 'Mech Bay', hint: `${MECHS.length} original designs`, fn: () => this.showBay(null) },
@@ -406,13 +448,18 @@ class App {
     const me = this.session.myId;
     const mis = MISSIONS.find((m) => m.id === L.settings.mission);
     const remote = !this.session.local;
-    const kindLabel = this.localKind === 'hotseat' ? 'Hotseat' : this.localKind === 'skirmish' ? 'Skirmish' : this.localKind === 'host' ? 'Hosting LAN game' : 'Online lobby';
+    const kindLabel = this.localKind === 'hotseat' ? 'Hotseat' : this.localKind === 'skirmish' ? 'Skirmish' : this.localKind === 'host' ? 'Hosting LAN game' : this.localKind === 'peerhost' ? 'Hosting online game' : 'Online lobby';
+    const peerStatus = this.session.peerHost ? (this.session.status === 'online' ? 'Online — waiting for players' : this.session.status === 'reconnecting' ? 'Reconnecting to matchmaking…' : 'Connecting to matchmaking…') : '';
     const addrs = this.hosting ? this.hosting.addresses : [];
     const el = html(`<div class="screen">
       <div class="screen-head"><div><div class="eyebrow">${esc(kindLabel)}</div><h2>${esc(mis.name)}</h2></div><div class="spacer"></div>
       ${remote ? `<div style="text-align:right"><div class="eyebrow">Room</div><div class="code-big">${esc(L.code)}</div></div>` : ''}</div>
       <div class="screen-body cols-2">
         <div class="stack scroll">
+          ${this.session.peerHost ? `<div class="panel pad stack share"><div class="eyebrow">Invite players · <span class="${this.session.status === 'online' ? 'ok-t' : 'warn'}">${esc(peerStatus)}</span></div>
+            <div style="font-size:15px">On any device, choose <b>Join Game</b> and enter code <b class="num code-inline">${esc(L.code)}</b>, or send them this link:</div>
+            <div class="sharelink"><input id="sharel" readonly value="${esc(PUBLIC_URL + '?join=' + L.code)}"><div class="btn nav" data-key="copylink">Copy</div></div>
+            <div class="faint" style="font-size:13px">Keep this screen open while you host — the game runs on this device.</div></div>` : ''}
           <div class="stack settings"></div>
           <p class="brief">${esc(mis.goal[0])}${mis.goal[1] && mis.goal[1] !== mis.goal[0] ? ' <span class="faint">vs</span> ' + esc(mis.goal[1]) : ''}</p>
           ${this.hosting ? `<div class="panel pad stack"><div class="eyebrow">Players join from</div>
@@ -433,6 +480,12 @@ class App {
       rr.addEventListener('click', () => this.session.send({ t: 'settings', settings: { seed: Math.random().toString(36).slice(2, 10) } }));
       settingsEl.appendChild(rr);
     }
+    const cp = $('[data-key=copylink]', el);
+    if (cp) cp.addEventListener('click', () => {
+      const inp = $('#sharel', el);
+      const done = () => toast('Invite link copied', true);
+      try { navigator.clipboard.writeText(inp.value).then(done, () => { inp.select(); document.execCommand && document.execCommand('copy'); done(); }); } catch { inp.select(); }
+    });
     const slotsEl = $('.slots', el);
     const teamsOn = mis.id !== 'generic' || L.settings.teamMode === 'teams';
     const order = L.slots.map((sl, i) => i).sort((a, b) => (teamsOn ? L.slots[a].team - L.slots[b].team : 0) || a - b);
@@ -599,7 +652,7 @@ class App {
 
   // ---- join
   showJoin() {
-    const st = { hosts: [], scanning: false, address: this.settings.lastServer || '', room: this.settings.lastRoom || '' };
+    const st = { hosts: [], scanning: false, address: this.settings.lastServer || '', room: '', code: this.settings.lastRoom && this.settings.lastRoom.length >= 5 ? this.settings.lastRoom : '' };
     let abort = null;
     const scan = async () => {
       if (st.scanning) return;
@@ -617,10 +670,17 @@ class App {
       }
       const el = html(`<div class="screen"><div class="screen-head"><div><div class="eyebrow">Crossplay</div><h2>Join Game</h2></div></div>
         <div class="screen-body cols-2">
-          <div class="stack">
+          <div class="stack scroll">
+            <div class="panel pad stack"><div class="eyebrow">Online game</div>
+              ${IS_ARTIFACT ? `<p class="brief" style="font-size:15px">Online games need the full web version: <a href="${PUBLIC_URL}" target="_blank" rel="noopener">${PUBLIC_URL}</a></p>` : `
+              <div class="field"><label for="pcode">Game code from the host</label><input id="pcode" class="nav" data-key="pcode" placeholder="ABCDE" maxlength="6" value="${esc(st.code)}" autocomplete="off" spellcheck="false" style="text-transform:uppercase;letter-spacing:0.2em"></div>
+              <div class="btn primary nav" data-key="pjoin">Join online game</div>
+              <div class="faint" style="font-size:13px">Works across the internet and on the same Wi-Fi, from any device.</div>`}
+            </div>
+            <div class="eyebrow" style="margin-top:6px">LAN server or dedicated server</div>
             <div class="field"><label for="addr">Host address</label><input id="addr" class="nav" data-key="addr" placeholder="192.168.4.20 or wss://server" value="${esc(st.address)}" autocomplete="off" spellcheck="false"></div>
             <div class="field"><label for="room">Room code (optional)</label><input id="room" class="nav" data-key="room" placeholder="ABCD" maxlength="4" value="${esc(st.room)}" autocomplete="off"></div>
-            <div class="btn primary nav" data-key="connect">Connect</div>
+            <div class="btn nav" data-key="connect">Connect to address</div>
             <div class="btn nav" data-key="create">Create new room on that server</div>
             <div class="field"><label for="pname">Your name</label><input id="pname" class="nav" data-key="pname" value="${esc(this.settings.name)}" maxlength="16"></div>
             ${secureBrowser ? '<p class="brief" style="font-size:14px">This web version can join internet servers that use wss://. To play on your home network from a browser, open the address shown on the host\'s lobby screen (it starts with http://).</p>' : ''}
@@ -628,7 +688,7 @@ class App {
           <div class="stack scroll">
             <div class="btn nav" data-key="scan">${st.scanning ? '<span class="spinner"></span> Scanning your network…' : 'Scan network for games'}</div>
             <div class="hosts"></div>
-            ${!st.hosts.length && !st.scanning ? `<p class="brief" style="font-size:15px">No games found yet. On a PC or Steam Deck, choose <b>Host LAN Game</b>; it will show up here. If it doesn't, type the address from the host's lobby screen.</p>` : ''}
+            ${!st.hosts.length && !st.scanning ? `<p class="brief" style="font-size:15px">No games found yet. On a PC or Steam Deck, choose <b>Host LAN Server</b>; it will show up here. If it doesn't, type the address from the host's lobby screen.</p>` : ''}
           </div></div></div>`);
       const hostsEl = $('.hosts', el);
       rows.forEach(({ h, room }, i) => {
@@ -640,6 +700,7 @@ class App {
       });
       const bindInput = (id, key) => { const i = $('#' + id, el); i.addEventListener('input', () => { st[key] = i.value; }); i.addEventListener('click', () => i.focus()); };
       bindInput('addr', 'address'); bindInput('room', 'room');
+      if ($('#pcode', el)) { bindInput('pcode', 'code'); $('[data-key=pjoin]', el).addEventListener('click', () => { abort && abort.abort(); this.joinOnline(st.code); }); }
       const pn = $('#pname', el); pn.addEventListener('input', () => { this.settings.name = pn.value || 'Pilot'; this.saveSettings(); }); pn.addEventListener('click', () => pn.focus());
       $('[data-key=connect]', el).addEventListener('click', () => { abort && abort.abort(); this.joinRemote(st.address, st.room.toUpperCase()); });
       $('[data-key=create]', el).addEventListener('click', () => { abort && abort.abort(); this.joinRemote(st.address, '', true); });
@@ -688,6 +749,12 @@ class App {
         b.addEventListener('click', () => change(d.k, 1));
         box.appendChild(b);
       }
+      const adv = html(`<div class="panel pad stack"><div class="eyebrow">Online play (advanced)</div>
+        <div class="field"><label for="sturn">TURN relay for strict networks</label><input id="sturn" class="nav" data-key="turn" placeholder="turn:user:password@relay.example.com:3478" value="${esc(s.turn || '')}" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="ssig">Matchmaking server (blank = free public PeerJS server)</label><input id="ssig" class="nav" data-key="signal" placeholder="https://my-peerjs-server.example.com/" value="${esc(s.signal || '')}" autocomplete="off" spellcheck="false"></div>
+        <div class="faint" style="font-size:13px">Only needed if players can't connect directly. Everyone in the game should use the same matchmaking server.</div></div>`);
+      for (const [id, key] of [['sturn', 'turn'], ['ssig', 'signal']]) { const i = $('#' + id, adv); i.addEventListener('input', () => { s[key] = i.value.trim(); this.saveSettings(); }); i.addEventListener('click', () => i.focus()); }
+      box.appendChild(adv);
       if (native && native.toggleFullscreen) { const fb = html('<div class="btn nav" data-key="fs">Toggle fullscreen<span class="val">F11</span></div>'); fb.addEventListener('click', () => native.toggleFullscreen()); box.appendChild(fb); }
       const controls = html(`<div class="panel pad" style="font-size:15px;line-height:1.5"><div class="eyebrow">Controls</div>
         Controller: left stick / d-pad move the cursor, right stick rotates the camera, triggers zoom. ${glyphHTML('confirm')} select, ${glyphHTML('back')} back, ${glyphHTML('x')} fire / stay, ${glyphHTML('y')} walk-run-jump / melee, bumpers cycle mechs and targets, View ends the turn.<br>

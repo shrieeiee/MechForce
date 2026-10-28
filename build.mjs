@@ -11,14 +11,15 @@ fs.mkdirSync(path.join(out, 'artifact'), { recursive: true });
 
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
-const client = await esbuild.build({
+const bundle = async (artifact) => (await esbuild.build({
   entryPoints: ['src/client/main.js'],
   bundle: true, format: 'iife', minify: !dev, sourcemap: false, write: false, target: ['es2020', 'chrome90', 'safari15'],
   loader: { '.css': 'text', '.woff2': 'dataurl' },
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: { 'process.env.NODE_ENV': '"production"', __MF_ARTIFACT__: artifact ? 'true' : 'false' },
   legalComments: 'none',
-});
-const js = client.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+})).outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+const js = await bundle(false);
+const jsArtifact = await bundle(true);
 
 const head = `<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
@@ -37,7 +38,7 @@ fs.writeFileSync(path.join(out, 'web', 'index.html'), fullPage);
 const artifact = `<title>MechForce</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>html,body{height:100%;margin:0;background:#0b0f13;color:#e9edf1;overflow:hidden}</style>
-<script>${js}</script>
+<script>${jsArtifact}</script>
 `;
 fs.writeFileSync(path.join(out, 'artifact', 'mechforce.html'), artifact);
 

@@ -256,6 +256,11 @@ export const MANUAL = [
     <p>Every part has weight: structure (10% of tonnage), the engine (tonnage × walking speed — fast heavy mechs need huge engines), gyro, cockpit, extra heat sinks, jump jets, armour (16 points per ton), weapons and ammo. The total can't go over the chassis tonnage.</p>
     <p>Each body location also has limited <b>critical slots</b>. The slot map under the model shows what's where; a weapon that doesn't fit has to move.</p>
     <p>Designs are saved on this device. They work in skirmish, hotseat and online games: the host rebuilds every custom mech with the same rules, so designs can't be tampered with.</p>` },
+  { k: 'online', t: 'Playing online', body: `
+    <p><b>Host Online</b> (title screen) works on every version, including the web page. You get a five-letter code and an invite link; friends choose <b>Join Game</b> and enter the code, or just open the link. It works over the internet and on the same Wi-Fi, and every platform can join.</p>
+    <p>The game runs on the host's device, so the host must keep MechForce open (on a phone, keep the screen on). Players who drop out reconnect into the same seat.</p>
+    <p>If someone can't connect, one of the networks is probably blocking direct connections. Add a TURN relay under <b>Settings → Online play</b>, or use a LAN or dedicated server instead.</p>
+    <p><b>Host LAN Server</b> (Windows and Steam Deck apps) runs a server on your home network that other apps find automatically.</p>` },
   { k: 'controls', t: 'Controls', body: `
     <table class="tt"><tr><td>Move cursor</td><td>Left stick / d-pad · WASD / arrows · mouse · tap</td></tr>
     <tr><td>Confirm</td><td>A / ✕ · Enter · click · tap again</td></tr>
