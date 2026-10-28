@@ -625,6 +625,7 @@ class App {
       this.preview.attach($('.viewer', el));
       $$('.vb', el).forEach((bt) => bt.addEventListener('click', (e) => { e.stopPropagation(); const v = bt.dataset.v; if (v === 'fire') salvo(); else this.preview.setMode(v); sfx('ui-move'); }));
       this.nav.onChange = (row) => { const key = row ? row.dataset.key : null; if (key === st.focus && this.preview.tpl && row && row._mech === this.bayShown) return; st.focus = key; this.bayShown = row ? row._mech : null; showMech(row ? row._mech : null); };
+      this.bayShown = null; // the panel was rebuilt, so always refill it
       if (st.focus) { const r = $$('.mech-row', el).find((x) => x.dataset.key === st.focus); if (r) this.nav.set(r, false); }
       this.nav.onChange(this.nav.cur);
     };

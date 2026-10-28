@@ -103,6 +103,7 @@ export class Renderer {
   buildMap(map) {
     this.map = map;
     this.world.clear();
+    this.marks = this.marks ? [] : this.marks;
     const th = THEMES[map.theme] || THEMES.temperate;
     this.theme = th;
     this.scene.background = new THREE.Color(th.sky);
@@ -695,7 +696,27 @@ export class Renderer {
   }
 
   // --------------------------------------------------------------- per-frame
+  // Tread marks left on the ground by tracked mechs; they fade over a few seconds
+  treadMark(pos, yaw, gauge, scale) {
+    if (!this.markGeo) { this.markGeo = new THREE.PlaneGeometry(1, 1); this.markGeo.rotateX(-Math.PI / 2); this.marks = []; }
+    for (const side of [-1, 1]) {
+      const m = new THREE.Mesh(this.markGeo, new THREE.MeshBasicMaterial({ color: '#15130f', transparent: true, opacity: 0.6, depthWrite: false }));
+      m.scale.set(0.16 * scale, 1, 0.34 * scale);
+      m.position.set(pos.x + Math.cos(yaw) * side * gauge, pos.y + 0.025, pos.z - Math.sin(yaw) * side * gauge);
+      m.rotation.y = yaw;
+      m.renderOrder = 1;
+      this.world.add(m);
+      this.marks.push({ m, age: 0 });
+    }
+    while (this.marks.length > 240) { const o = this.marks.shift(); this.world.remove(o.m); o.m.material.dispose(); }
+  }
+
   frame(dt) {
+    if (this.marks) for (let i = this.marks.length - 1; i >= 0; i--) {
+      const o = this.marks[i]; o.age += dt;
+      o.m.material.opacity = 0.6 * Math.max(0, 1 - o.age / 14);
+      if (o.age > 14) { this.world.remove(o.m); o.m.material.dispose(); this.marks.splice(i, 1); }
+    }
     this.time += dt;
     this.updateCamera(dt);
     this.tickFx(dt);
@@ -878,7 +899,11 @@ export class Renderer {
         let lastK = 0;
         await this.tween(stepMs, (k) => {
           root.position.lerpVectors(pa, pb, k);
-          if (tracked) { rollTracks(v.model, (reverse ? -1 : 1) * (k - lastK) * 9); lastK = k; return; }
+          if (tracked) {
+            rollTracks(v.model, (reverse ? -1 : 1) * (k - lastK) * pa.distanceTo(pb));
+            if (Math.floor(k * 5) !== Math.floor(lastK * 5)) this.treadMark(root.position, root.rotation.y, v.model.trackGauge, v.model.scale);
+            lastK = k; return;
+          }
           root.position.y += Math.sin(k * Math.PI) * 0.06;
           v.walk += (reverse ? -1 : 1) * 0.2;
           const sw = Math.sin(k * Math.PI * 2) * 0.55;

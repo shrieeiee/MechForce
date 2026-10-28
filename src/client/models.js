@@ -185,25 +185,69 @@ function mergeStatic(obj) {
   }
 }
 
-// Track unit bolted to the front of a shin. Standing, it's armour; kneeling (tracked or
-// QuadVee vehicle mode) the shin swings back and the track runs along the ground.
+// Track unit bolted to a shin: a loop of tread links running round a drive sprocket, an
+// idler and road wheels. Standing, it's shin armour; kneeling (tracked or QuadVee vehicle
+// mode) the shin swings flat and the tread runs along the ground. The links are one
+// instanced mesh so they can roll round the loop cheaply.
+const TREAD_MAT = new THREE.MeshStandardMaterial({ color: '#ffffff', metalness: 0.75, roughness: 0.55 });
+const TREAD_A = new THREE.Color('#5d646d'), TREAD_B = new THREE.Color('#33383e');
+const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _one = new THREE.Vector3(1, 1, 1);
 function trackPod(knee, legW, legLen, s, mats, M, back = false) {
   const pod = new THREE.Group();
-  const L = legLen * 0.86, T = legW * 0.62, W = legW * 1.5;
-  pod.position.set(0, -legLen * 0.48, (back ? -1 : 1) * (legW * 0.62 + T / 2));
+  const L = legLen * 0.92, T = legW * 0.92, W = legW * 1.6;
+  const R = T / 2, a = L / 2 - R;
+  const dir = back ? -1 : 1;
+  pod.position.set(0, -legLen * 0.5, dir * (legW * 0.6 + R));
   knee.add(pod);
-  M(plate(W, L, T, 0.3), mats.dark, 0, 0, 0, pod);
-  M(plate(W * 0.9, L * 0.82, 0.02 * s), mats.joint, 0, 0, T / 2 + 0.004 * s, pod);
-  for (const e of [-1, 1]) { const cap = M(cyl(T * 0.5, T * 0.5, W * 1.02, 12), mats.dark, 0, e * L / 2, 0, pod); cap.rotation.z = Math.PI / 2; }
-  for (let k = 0; k < 9; k++) M(box(W * 1.04, 0.012 * s, 0.014 * s), mats.tube, 0, -L * 0.45 + k * L * 0.112, T / 2 + 0.008 * s, pod);
+  // frame between the wheels, bolted to the shin
+  M(plate(W * 0.5, L * 0.86, T * 0.5, 0.2), mats.dark, 0, 0, -dir * R * 0.45, pod);
+  M(plate(W * 0.18, L * 0.7, T * 0.3), mats.hazard, 0, 0, -dir * R * 0.1, pod);
   const wheels = [];
-  for (const side of [-1, 1]) for (let k = 0; k < 3; k++) {
-    const g = new THREE.Group(); g.position.set(side * (W / 2 + 0.006 * s), -L * 0.3 + k * L * 0.3, 0); pod.add(g);
-    const w = new THREE.Mesh(cyl(T * 0.36, T * 0.36, 0.02 * s, 10), mats.joint); w.rotation.z = Math.PI / 2; w.userData.keep = true; g.add(w);
-    const sp = new THREE.Mesh(box(0.024 * s, T * 0.6, 0.012 * s), mats.trim); sp.userData.keep = true; g.add(sp);
-    wheels.push(g);
-  }
-  return { pod, wheels, below: legW * 0.62 + T };
+  const wheel = (y, r, kind) => {
+    const g = new THREE.Group(); g.position.set(0, y, 0); pod.add(g);
+    const tyre = new THREE.Mesh(cyl(r, r, W * 0.82, 16), mats.joint); tyre.rotation.z = Math.PI / 2; tyre.userData.keep = true; g.add(tyre);
+    for (const sx of [-1, 1]) {
+      const hub = new THREE.Mesh(cyl(r * 0.55, r * 0.55, 0.012 * s, 10), mats.chrome); hub.rotation.z = Math.PI / 2; hub.position.x = sx * W * 0.42; hub.userData.keep = true; g.add(hub);
+      for (let k = 0; k < (kind === 'sprocket' ? 3 : 2); k++) { const sp = new THREE.Mesh(box(0.016 * s, r * 1.5, r * 0.22), mats.trim); sp.rotation.x = k * Math.PI / (kind === 'sprocket' ? 3 : 2); sp.position.x = sx * W * 0.43; sp.userData.keep = true; g.add(sp); }
+    }
+    if (kind === 'sprocket') for (let k = 0; k < 10; k++) { const t = new THREE.Mesh(box(W * 0.3, r * 0.22, r * 0.22), mats.trim); const ang = k / 10 * Math.PI * 2; t.position.set(0, Math.cos(ang) * r * 1.02, Math.sin(ang) * r * 1.02); t.rotation.x = ang; t.userData.keep = true; g.add(t); }
+    wheels.push({ g, r, sign: back ? -1 : 1 });
+  };
+  wheel(a, R * 0.86, 'sprocket');
+  wheel(-a, R * 0.8, 'idler');
+  const nRoad = Math.max(2, Math.round((2 * a) / (R * 1.5)) - 1);
+  for (let k = 1; k <= nRoad; k++) wheel(a - (2 * a) * k / (nRoad + 1), R * 0.62, 'road');
+  // tread links round the loop
+  const P = 4 * a + 2 * Math.PI * R;
+  const n = Math.max(16, Math.round(P / (0.042 * s)));
+  const step = P / n;
+  const links = new THREE.InstancedMesh(box(W, step * 0.8, R * 0.3), TREAD_MAT, n);
+  for (let i = 0; i < n; i++) links.setColorAt(i, i % 2 ? TREAD_B : TREAD_A);
+  links.userData.keep = true; links.castShadow = true; links.frustumCulled = false;
+  pod.add(links);
+  // position u (0..P) round the stadium: outer run (ground side when kneeling) first
+  const at = (u) => {
+    u = ((u % P) + P) % P;
+    let y, z, ty, tz;
+    if (u < 2 * a) { y = a - u; z = dir * R; ty = -1; tz = 0; }
+    else if ((u -= 2 * a) < Math.PI * R) { const th = u / R; y = -a - R * Math.sin(th); z = dir * R * Math.cos(th); ty = -Math.cos(th); tz = -dir * Math.sin(th); }
+    else if ((u -= Math.PI * R) < 2 * a) { y = -a + u; z = -dir * R; ty = 1; tz = 0; }
+    else { u -= 2 * a; const th = u / R; y = a + R * Math.sin(th); z = -dir * R * Math.cos(th); ty = Math.cos(th); tz = dir * Math.sin(th); }
+    return { y, z, r: Math.atan2(tz, ty) };
+  };
+  // +dist = rolling forward. A QuadVee's front legs fold the other way, so their loop runs backwards.
+  const tread = { links, n, step, phase: 0, at, sign: back ? -1 : 1 };
+  const place = () => {
+    for (let i = 0; i < n; i++) {
+      const q = at(i * step + tread.phase);
+      _m4.compose(_v.set(0, q.y, q.z), _q.setFromEuler(_e.set(q.r, 0, 0)), _one);
+      links.setMatrixAt(i, _m4);
+    }
+    links.instanceMatrix.needsUpdate = true;
+  };
+  tread.place = place;
+  place();
+  return { pod, wheels, tread, below: legW * 0.6 + T };
 }
 
 export function buildMech(spec, colorHex) {
@@ -432,7 +476,9 @@ export function buildMech(spec, colorHex) {
   const pods = legs.filter((l) => l.pod);
   const kneelDrop = !pods.length ? 0 : qv ? hipY - pods[0].pod.below - 0.02 * s : Math.min(...pods.map((l) => hipY + l.knee.position.y - l.pod.below));
   const wheels = pods.flatMap((l) => l.pod.wheels);
-  const model = { root, body, torso, head, legs, arms, muzzles, weaponMounts, jets, mats, height, scale: s, quad, tripod, wheels, vk: 0 };
+  const treads = pods.map((l) => l.pod.tread);
+  const trackGauge = pods.length ? Math.max(...pods.map((l) => Math.abs(l.hip.position.x))) : 0;
+  const model = { root, body, torso, head, legs, arms, muzzles, weaponMounts, jets, mats, height, scale: s, quad, tripod, wheels, treads, trackGauge, vk: 0 };
   model.setVehicle = (k) => {
     model.vk = k;
     if (!pods.length) return;
@@ -452,8 +498,12 @@ export function buildMech(spec, colorHex) {
   model.vOffset = 0;
   return model;
 }
-// Spin road wheels while driving
-export function rollTracks(model, dist) { for (const w of model.wheels) w.rotation.x += dist; }
+// Drive the tracks: dist is how far the mech rolled (world units); links run round the
+// loop and every wheel turns to match
+export function rollTracks(model, dist) {
+  for (const w of model.wheels) w.g.rotation.x -= w.sign * dist / w.r;
+  for (const t of model.treads) { t.phase += t.sign * dist; t.place(); }
+}
 
 export function buildItem(kind) {
   const g = new THREE.Group();

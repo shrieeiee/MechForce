@@ -200,7 +200,7 @@ export class MechPreview {
       const T = this.modeT;
       const wantV = this.mode === 'drive' ? (T < 0.8 ? T / 0.8 : T < 3.4 ? 1 : Math.max(0, 1 - (T - 3.4) / 0.8)) : 0;
       if (wantV > 0 || m.vk > 0) m.setVehicle(this.mode === 'drive' ? wantV * wantV * (3 - 2 * wantV) : Math.max(0, m.vk - dt * 2));
-      if (this.mode === 'drive' && wantV >= 1) rollTracks(m, dt * 7);
+      if (this.mode === 'drive' && wantV >= 1) rollTracks(m, dt * 0.9);
       let bodyY = 0, bob = 0;
       if (this.mode === 'walk') {
         const ph = this.modeT * 5.2;
