@@ -1,6 +1,6 @@
 {
   "name": "mechforce",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "MechForce: Heavy Metal Combat — a modern crossplay remake of Ralph H. Reed's 1989 Amiga game",
   "type": "module",
   "private": true,
