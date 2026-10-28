@@ -6,7 +6,7 @@ const WebSocket = require('ws');
   const got = [];
   ws.on('message', (d) => got.push(JSON.parse(d)));
   await new Promise((r) => ws.on('open', r));
-  ws.send(JSON.stringify({ t: 'hello', name: 'Deck', platform: 'Steam Deck', protocol: 3, create: true }));
+  ws.send(JSON.stringify({ t: 'hello', name: 'Deck', platform: 'Steam Deck', protocol: 4, create: true }));
   await new Promise((r) => setTimeout(r, 300));
   const good = { name: 'Shrike', tons: 60, walk: 5, jump: 0, hs: 10, armor: [5, 14, 20, 14, 4, 6, 4, 13, 12, 18, 18], weapons: [{ t: 13, loc: 4 }, { t: 13, loc: 5 }, { t: 16, loc: 3 }] };
   const hacked = { name: 'Godmech', tons: 20, walk: 9, jump: 9, hs: 40, armor: Array(11).fill(99), weapons: Array(16).fill({ t: 3, loc: 2, ammo: 4 }) };

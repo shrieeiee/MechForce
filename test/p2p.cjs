@@ -17,6 +17,7 @@ const N = +(process.env.N || 2);
   await A.waitForTimeout(800);
   console.log('host code', code, 'share:', await A.evaluate(() => document.querySelector('#sharel') && document.querySelector('#sharel').value));
   if (N > 2) { await A.evaluate((n) => window.__mf.session.send({ t: 'settings', settings: { sides: n } }), N); await A.waitForTimeout(500); }
+  if (process.env.FOG) { await A.evaluate(() => window.__mf.session.send({ t: 'settings', settings: { fog: true, mapSize: 'L' } })); await A.waitForTimeout(400); }
   const joiners = [];
   for (let i = 1; i < N; i++) { const p = await mk('Peer' + i); await p.goto('http://127.0.0.1:8090/?join=' + code); joiners.push(p); }
   await A.waitForFunction((n) => window.__mf.lobby && window.__mf.lobby.clients.length === n, N, { timeout: 30000 });
@@ -59,6 +60,15 @@ const N = +(process.env.N || 2);
   const snap = (p) => p.evaluate(() => { const s = window.__mf.battle.state; return JSON.stringify({ seq: s.seq, round: s.round, hp: s.mechs.map((m) => m.armor.reduce((a, b) => a + b, 0)).join(','), vm: s.mechs.map((m) => m.vmode[0]).join('') }); });
   const ss = []; for (const p of all) ss.push(await snap(p));
   ss.forEach((s, i) => console.log(i ? 'peer' + i : 'host ', s));
+  if (process.env.FOG) {
+    // each player's copy must hide exactly what the host's full game says their team can't see
+    const full = await A.evaluate(() => JSON.stringify(window.__mf.session.room.game));
+    for (const [i, pp] of all.entries()) {
+      const v = await pp.evaluate(() => { const bt = window.__mf.battle; return { me: bt.mySides(), mechs: bt.state.mechs.map((m) => ({ id: m.id, x: m.x, hidden: !!m.hidden })) }; });
+      console.log(i ? 'peer' + i : 'host ', 'sides', v.me.join(), 'hidden mechs', v.mechs.filter((m) => m.hidden).map((m) => m.id).join(',') || 'none', 'positions leaked', v.mechs.filter((m) => m.hidden && m.x !== -1).length);
+    }
+    void full;
+  }
   console.log('in sync:', ss.every((s) => s === ss[0]), 'actions:', acts);
   await A.screenshot({ path: OUT + '/p2p-host.png' }); await joiners[0].screenshot({ path: OUT + '/p2p-peer.png' });
   console.log('errors:', all.map((p) => p.errs.slice(0, 3)));

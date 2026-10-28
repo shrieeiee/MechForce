@@ -3,6 +3,7 @@ import { computeReach, canEndAt, pathFrom, reachKey, toHit, availableMechs, oper
   moveModes, availMP, canConvert, conversionCost, pilotingMods, isQuadVee, onTracks, MOVE_HEAT } from '../core/rules.js';
 import { WEAPONS, MISSIONS, CLASS_NAMES, TERRAIN, critName } from '../core/data.js';
 import { neighbor, distance, facingToward, relBearing } from '../core/hex.js';
+import { fogView, fogEvents } from '../core/fog.js';
 import { $, $$, html, esc, promptBar, toast, banner, paperDoll, FocusNav, glyphHTML, floatText } from './ui.js';
 import { input } from './input.js';
 import { sfx, music } from './audio.js';
@@ -48,9 +49,24 @@ export class Battle {
   }
   isMine(side) { return this.state && this.state.sides[side] && this.state.sides[side].ctrl === this.myId; }
 
+  // ------------------------------------------------------------ fog of war
+  // Which team's eyes we look through. Online the host already sends only what we can see;
+  // on a hotseat device with players on different teams we hide things per turn here.
+  fogTeams(full) {
+    if (!full || !full.fog) return [];
+    const mine = full.sides.map((s, i) => (s.ctrl === this.myId ? i : -1)).filter((i) => i >= 0);
+    const teams = [...new Set(mine.map((i) => full.sides[i].team ?? i))];
+    if (teams.length <= 1) return teams;
+    const side = this.perspSide ?? (mine.includes(activeSide(full)) ? activeSide(full) : mine[0]);
+    return [full.sides[side].team ?? side];
+  }
+  setFull(full) { this.full = full; this.state = fogView(full, this.fogTeams(full)); }
+
   // ------------------------------------------------------------ lifecycle
   start(state) {
-    this.state = state;
+    this.perspSide = null;
+    this.setFull(state);
+    state = this.state;
     this.feed = [];
     this.r.buildMap(state.map);
     this.r.syncMechs(state);
@@ -83,12 +99,14 @@ export class Battle {
 
   onUpdate(msg) {
     const prevSide = this.state ? activeSide(this.state) : -1;
-    this.state = msg.state;
+    const events = fogEvents(msg.state, msg.events, this.fogTeams(msg.state));
+    this.setFull(msg.state);
+    const view = this.state;
     const briefing = this.ix.mode === 'briefing';
     if (!briefing) { this.ix = { mode: 'anim' }; this.r.clearOverlays(); }
     this.render();
-    this.r.play(msg.events, msg.state, (e) => this.onEvent(e)).then(() => {
-      if (this.state !== msg.state) return; // newer update queued
+    this.r.play(events, view, (e) => this.onEvent(e)).then(() => {
+      if (this.full !== msg.state) return; // newer update queued
       if (this.ix.mode === 'briefing') { this.render(); return; }
       this.refresh(prevSide);
     });
@@ -142,6 +160,11 @@ export class Battle {
   }
 
   beginMyTurn(preferId) {
+    if (this.full && this.full.fog && this.perspSide !== activeSide(this.full)) {
+      const before = this.fogTeams(this.full).join();
+      this.perspSide = activeSide(this.full);
+      if (this.fogTeams(this.full).join() !== before) { this.setFull(this.full); this.r.syncMechs(this.state); }
+    }
     const st = this.state;
     const side = activeSide(st);
     if (st.act) {
@@ -175,7 +198,7 @@ export class Battle {
 
   bestFacingAt(reach, x, y, m) {
     let best = -1, bc = Infinity;
-    const enemies = this.state.mechs.filter((e) => operational(e) && (e.team ?? e.side) !== (m.team ?? m.side));
+    const enemies = this.state.mechs.filter((e) => operational(e) && !e.hidden && (e.team ?? e.side) !== (m.team ?? m.side));
     let near = null, nd = 99;
     for (const e of enemies) { const d = distance(x, y, e.x, e.y); if (d < nd) { nd = d; near = e; } }
     const want = near ? facingToward(x, y, near.x, near.y) : m.f;
@@ -268,7 +291,7 @@ export class Battle {
 
   enterAttack(id) {
     const st = this.state, m = st.mechs[id];
-    const enemies = st.mechs.filter((e) => operational(e) && (e.team ?? e.side) !== (m.team ?? m.side));
+    const enemies = st.mechs.filter((e) => operational(e) && !e.hidden && (e.team ?? e.side) !== (m.team ?? m.side));
     const scored = enemies.map((e) => {
       let ed = 0;
       for (const w of m.weapons) { const th = toHit(st, m, e, w); if (th.ok) ed += expectedDamage(w, th.p); }
@@ -374,7 +397,7 @@ export class Battle {
         if (a === 'confirm' || a === 'back') { sfx('ui-ok'); if (this.r.busy) { this.ix = { mode: 'anim' }; this.render(); } else this.refresh(); }
         return true;
       case 'pass':
-        if (a === 'confirm') { sfx('ui-ok'); this.beginMyTurn(); }
+        if (a === 'confirm') { sfx('ui-ok'); this.perspSide = ix.side; this.setFull(this.full); this.r.syncMechs(this.state); this.beginMyTurn(); }
         return true;
       case 'move': {
         const dirs = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -620,7 +643,7 @@ export class Battle {
       const mech = m || (this.ix.mechId !== undefined ? st.mechs[this.ix.mechId] : null);
       return `<b style="color:${s.color}">Your turn</b>${mech ? ' · ' + esc(mech.design) : ''}`;
     }
-    return `<b style="color:${s.color}">${esc(s.name)}</b> · ${s.ctrl === 'ai' ? 'computer' : 'opponent'}${m ? ' moving ' + esc(m.design) : ' choosing'}`;
+    return `<b style="color:${s.color}">${esc(s.name)}</b> · ${s.ctrl === 'ai' ? 'computer' : 'opponent'}${m ? (m.hidden ? ' moving out of sight' : ' moving ' + esc(m.design)) : ' choosing'}`;
   }
 
   stepBar() {
@@ -633,7 +656,7 @@ export class Battle {
     const av = mine ? availableMechs(st, side) : [];
     const mech = ix.mechId !== undefined ? st.mechs[ix.mechId] : null;
     let hint = '';
-    if (!mine) hint = st.over ? 'The battle is over.' : `${esc(st.sides[side]?.name || '')} is taking its turn. Hover or select any mech to inspect it.`;
+    if (!mine) hint = st.over ? 'The battle is over.' : `${esc(st.sides[side]?.name || '')} is taking its turn.${st.fog ? ' Fog of war: you only see enemies your mechs can see.' : ' Hover or select any mech to inspect it.'}`;
     else if (ix.mode === 'move') {
       const names = Object.keys(ix.reach).filter((k) => usable(ix.reach[k], k)).map((k) => `<span style="color:${MODE_COLOR[k]}">${MODE_LABEL[k].toLowerCase()}</span>`);
       const extra = mech.body === 'quad' && !onTracks(mech) && !baseMode(ix.moveMode).match(/jump/) ? ' Four legs can side-step without turning.' : isConv(ix.moveMode) ? ` Converts at the end of the move (${conversionCost(mech)} MP).` : '';
@@ -677,7 +700,7 @@ export class Battle {
     const st = this.state, ix = this.ix;
     this.cardsEl.replaceChildren();
     const activeId = ix.mechId ?? (st.act ? st.act.id : null);
-    if (activeId !== null && activeId !== undefined && st.mechs[activeId]) this.cardsEl.appendChild(this.unitCard(st.mechs[activeId], false));
+    if (activeId !== null && activeId !== undefined && st.mechs[activeId] && !st.mechs[activeId].hidden) this.cardsEl.appendChild(this.unitCard(st.mechs[activeId], false));
     if (ix.mode === 'attack' && ix.targetId !== undefined && st.mechs[ix.targetId]) this.cardsEl.appendChild(this.targetCard(st.mechs[ix.mechId], st.mechs[ix.targetId]));
     else if (this.hover && this.hover.id !== activeId) this.cardsEl.appendChild(this.unitCard(this.hover, true));
     else if (ix.mode === 'move' || ix.mode === 'wait') this.cardsEl.appendChild(this.terrainCard());

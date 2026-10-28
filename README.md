@@ -40,6 +40,10 @@ Design custom mechs (title screen → Mech Lab, or the ★ Custom tab in the Mec
 
 Initiative each round; sides alternate activating one mech at a time. Walk / run / jump with facing and terrain costs (woods, rough, water, elevation). 2d6 to-hit with range, movement, cover, heat and damage modifiers. Hit locations by attack direction (front, sides, rear armour), damage transfer, critical hits from the real crit tables (ammo explosions, engine, gyro, actuators, cockpit, sensors, heat sinks, jump jets), heat with shutdown and ammo cook-off, falls, pilot injuries and consciousness rolls, punches and kicks. Each round is 50 seconds, as in the original's "500 seconds".
 
+## Fog of war
+
+Turn on **Fog of war** in the battle setup and each side only sees enemy mechs one of its own mechs can see (line of sight, or standing next to it). Unseen enemies move in secret; a faded "?" marker shows where each was last spotted, until you can see that spot is empty. Firing gives a mech away to the side it shot at for the rest of the round, wrecks stay visible, and everything is revealed when the battle ends. The computer plays by the same rules. Online, the host only sends each player what their side can see; on a hotseat device the view switches with each player's turn.
+
 ## Up to four players
 
 Every mission supports 2–4 forces, each a player (local hotseat or online) or the computer. Objective missions are played as two teams (2v2, 2v1 or 3v1 — move forces between teams in the lobby); Search & Destroy can be a free-for-all or two teams. Teammates deploy together, can't damage each other and win together.

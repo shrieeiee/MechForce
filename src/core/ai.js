@@ -1,13 +1,29 @@
 // Computer opponent. Returns one command at a time for the active AI side.
 import { WEAPONS, TERRAIN } from './data.js';
 import { computeReach, canEndAt, toHit, availableMechs, operational, canAct, lineOfSight, inArc, missionOf,
-  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT } from './rules.js';
+  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo } from './rules.js';
 import { distance, relBearing } from './hex.js';
 import { chance, nextRand } from './rng.js';
 
 function moveMod(mode, hexes) {
   let v = hexes >= 18 ? 5 : hexes >= 10 ? 4 : hexes >= 7 ? 3 : hexes >= 5 ? 2 : hexes >= 3 ? 1 : 0;
   return v + (mode === 'jump' ? 1 : 0);
+}
+
+// With fog of war the computer only knows about enemies its team can see
+const knownEnemies = (st, m) => st.mechs.filter((e) => operational(e) && e.team !== m.team && visibleTo(st, m.team, e));
+// ...and otherwise hunts towards where it last saw one, or the middle of the map
+function searchGoal(st, m) {
+  const mem = st.seen && st.seen[m.team];
+  let best = null;
+  if (mem) for (const [id, g] of Object.entries(mem)) {
+    const e = st.mechs[id];
+    if (!e || !operational(e)) continue;
+    const score = g.r * 10 - distance(m.x, m.y, g.x, g.y);
+    if (!best || score > best.score) best = { x: g.x, y: g.y, score };
+  }
+  if (best && distance(m.x, m.y, best.x, best.y) > 1) return { x: best.x, y: best.y, weight: 1.2 };
+  return { x: st.map.w >> 1, y: st.map.h >> 1, weight: 0.8 };
 }
 
 function goalFor(st, m) {
@@ -50,9 +66,9 @@ function bestVolley(opts, budget) {
 }
 
 function evalPositions(st, m) {
-  const enemies = st.mechs.filter((e) => operational(e) && e.team !== m.team);
+  const enemies = knownEnemies(st, m);
   const allies = st.mechs.filter((e) => operational(e) && e.team === m.team && e.id !== m.id);
-  const goal = goalFor(st, m);
+  const goal = goalFor(st, m) || (st.fog && !enemies.length ? searchGoal(st, m) : null);
   const { w, h } = st.map;
   const avgRange = m.weapons.filter((x) => x.ok).reduce((s, x) => s + x.rng, 0) / Math.max(1, m.weapons.filter((x) => x.ok).length) || 6;
   const optRange = Math.max(1, Math.min(9, Math.round(avgRange * 0.5)));
@@ -164,7 +180,7 @@ function evalPositions(st, m) {
 function moveModE(e) { return moveMod(moveKind(e.lastMove.mode), e.lastMove.hexes) + (e.prone ? 1 : 0); }
 
 function chooseAttack(st, m) {
-  const enemies = st.mechs.filter((e) => operational(e) && e.team !== m.team);
+  const enemies = knownEnemies(st, m);
   let best = { v: 0, cmd: null };
   const budget = dissipation(st, m) - m.heat - (st.act ? st.act.heatGen : 0) + 5;
   for (const e of enemies) {

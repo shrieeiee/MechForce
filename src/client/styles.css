@@ -521,3 +521,7 @@ table.tt td { padding: 2px 8px 2px 0; vertical-align: top; } table.tt td:first-c
 .nav.focus .ctag { color: #1a1206; border-color: rgba(26, 18, 6, 0.4); }
 .modes.four .mode { padding: 5px 4px; font-size: 10px; letter-spacing: 0; gap: 0 3px; }
 .modes.four .mode .ico { width: 13px; height: 13px; }
+/* fog of war: last-seen markers */
+.mlabel.ghost { opacity: 0.55; }
+.mlabel.ghost b::after { content: ' ?'; }
+.mlabel.ghost i { display: none; }

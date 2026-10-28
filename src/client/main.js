@@ -420,6 +420,8 @@ class App {
     ];
     defs.push({ k: 'sides', label: 'Forces (players or AI)', value: String(L.settings.sides), opts: [2, 3, 4] });
     if (mis.id === 'generic') defs.push({ k: 'teamMode', label: 'Teams', value: L.settings.teamMode === 'teams' ? 'Two teams' : 'Free-for-all', opts: ['ffa', 'teams'] });
+    defs.push({ k: 'fog', label: 'Fog of war', value: L.settings.fog ? 'On' : 'Off', opts: [false, true],
+      tip: '<p><b>On</b>: you only see enemy mechs that one of your mechs has line of sight to (or is standing next to). Enemies out of sight move unseen; a faded marker shows where you last saw them. Firing gives a mech away to the side it shot at for the rest of the round.</p><p>Online, each player\'s device is only sent what their side can see. In hotseat games the view switches with each player\'s turn. The computer plays by the same rules.</p>' });
     return defs;
   }
 
@@ -471,7 +473,7 @@ class App {
       </div></div>`);
     const settingsEl = $('.settings', el);
     for (const d of this.lobbySettingDefs()) {
-      const b = html(`<div class="btn nav ${this.isHost ? '' : 'disabled'}" data-key="set-${d.k}" data-setting="${d.k}">${esc(d.label)}<span class="val ${this.isHost ? 'arrows' : ''}">${esc(d.value)}</span></div>`);
+      const b = html(`<div class="btn nav ${this.isHost ? '' : 'disabled'}" data-key="set-${d.k}" data-setting="${d.k}" ${d.tip ? tipAttr(d.label, d.tip) : ''}>${esc(d.label)}<span class="val ${this.isHost ? 'arrows' : ''}">${esc(d.value)}</span></div>`);
       b.addEventListener('click', () => this.changeSetting(d.k, 1));
       settingsEl.appendChild(b);
     }

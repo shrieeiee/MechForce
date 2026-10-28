@@ -295,6 +295,11 @@ export const MANUAL = [
     <p><b>Tripods</b> (Triskelion, Poseidon, Ares) have arms and three legs: -1 to piloting rolls, and leg hits can land on the centre leg. One lost leg drops them to 1 MP.</p>
     <p><b>Tracks</b> (Brahma, or any design in the Mech Lab): pick <b>Tracks</b> as the movement mode to kneel and roll at walking speed. On tracks the mech ignores leg and gyro damage when keeping its balance, but can't enter heavy woods or water, climbs one level at a time and pays double to climb.</p>
     <p><b>QuadVees</b> (Arion, Cyllaros, Boreas, Harpagos) are Clan four-legged mechs that fold into tanks. Press <b>Convert</b> while moving: it costs 2 MP and happens at the end of the move. In vehicle mode they <b>cruise</b> or <b>flank</b> with no movement heat, can't fall over and can drive through water, but can't jump, kick or side-step. Each lost leg or track takes a quarter of their tank speed.</p>` },
+  { k: 'fog', t: 'Fog of war', body: `
+    <p>Turn on <b>Fog of war</b> in the battle setup and you only see enemy mechs that at least one of your mechs can see: a clear line of sight (hills block it, and three hexes' worth of woods), or standing right next to it. Enemies out of sight move unseen.</p>
+    <p>A faded marker with a <b>?</b> shows where you last saw each enemy and which way it was facing. They won't be there for long.</p>
+    <p>Firing gives a mech away: whoever it shot at can see it for the rest of the round. Wrecks stay visible.</p>
+    <p>The computer plays by the same rules. Online, each player's device is only sent what their side can see; in hotseat games the view switches with each player's turn. When the battle ends, everything is revealed.</p>` },
   { k: 'controls', t: 'Controls', body: `
     <table class="tt"><tr><td>Move cursor</td><td>Left stick / d-pad · WASD / arrows · mouse · tap</td></tr>
     <tr><td>Confirm</td><td>A / ✕ · Enter · click · tap again</td></tr>

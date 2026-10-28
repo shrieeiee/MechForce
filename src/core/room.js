@@ -4,6 +4,7 @@ import { createGame, applyCommand, activeSide } from './rules.js';
 import { aiNextCommand } from './ai.js';
 import { MECHS, MISSIONS, PROTOCOL, VERSION, SIDE_NAMES, SIDE_COLORS, mechBV } from './data.js';
 import { buildTemplate } from './custom.js';
+import { fogView, fogEvents, viewTeams } from './fog.js';
 
 let nextClient = 1;
 const rid = () => Math.random().toString(36).slice(2, 10);
@@ -60,7 +61,7 @@ export class Room {
     this.local = local;
     this.clients = new Map();
     this.hostId = null;
-    this.settings = { mission: 'generic', mapSize: 'M', theme: 'temperate', tonnage: 200, seed: rid(), sides: 2, lanceSize: 4, teamMode: 'ffa' };
+    this.settings = { mission: 'generic', mapSize: 'M', theme: 'temperate', tonnage: 200, seed: rid(), sides: 2, lanceSize: 4, teamMode: 'ffa', fog: false };
     this.slots = [];
     this.game = null;
     this.aiTimer = null;
@@ -113,7 +114,7 @@ export class Room {
       }
     }
     this.send(c.id, { t: 'welcome', id: c.id, token: c.token, room: this.code, version: VERSION, protocol: PROTOCOL, host: this.hostId === c.id });
-    if (this.game) this.send(c.id, { t: 'start', state: this.game });
+    if (this.game) this.send(c.id, { t: 'start', state: this.viewFor(c.id, this.game) });
     this.pushLobby();
     return c.id;
   }
@@ -142,6 +143,18 @@ export class Room {
   }
   pushLobby() { const l = this.lobbyState(); for (const c of this.clients.values()) if (c.connected) this.send(c.id, { t: 'lobby', lobby: l }); }
   broadcast(msg) { for (const c of this.clients.values()) if (c.connected) this.send(c.id, msg); }
+  // Fog of war: each player only receives what their team can see. A client commanding
+  // sides on more than one team (hotseat) gets everything and hides it locally per turn.
+  viewFor(id, g) { const teams = viewTeams(g, id); return teams.length === 1 ? fogView(g, teams) : g; }
+  broadcastGame(events) {
+    const g = this.game;
+    for (const c of this.clients.values()) {
+      if (!c.connected) continue;
+      const teams = viewTeams(g, c.id);
+      if (g.fog && teams.length === 1) this.send(c.id, { t: 'update', events: fogEvents(g, events, teams), state: fogView(g, teams), seq: g.seq });
+      else this.send(c.id, { t: 'update', events, state: g, seq: g.seq });
+    }
+  }
 
   summary() {
     return { code: this.code, host: this.clients.get(this.hostId)?.name || '?', players: [...this.clients.values()].filter((c) => c.connected).length,
@@ -158,7 +171,8 @@ export class Room {
       case 'settings': {
         if (!isHost || this.game) return err('Only the host can change settings');
         const s = msg.settings || {};
-        for (const k of ['mission', 'mapSize', 'theme', 'tonnage', 'seed', 'sides', 'lanceSize', 'teamMode']) if (s[k] !== undefined) this.settings[k] = s[k];
+        for (const k of ['mission', 'mapSize', 'theme', 'tonnage', 'seed', 'sides', 'lanceSize', 'teamMode', 'fog']) if (s[k] !== undefined) this.settings[k] = s[k];
+        this.settings.fog = !!this.settings.fog;
         this.settings.tonnage = Math.max(20, Math.min(800, +this.settings.tonnage || 200));
         this.settings.lanceSize = Math.max(1, Math.min(4, +this.settings.lanceSize || 4));
         this.resizeSlots();
@@ -221,10 +235,10 @@ export class Room {
         });
         if (problems.length) return err(problems[0]);
         this.game = createGame({
-          seed: this.settings.seed, mission: this.settings.mission, mapSize: this.settings.mapSize, theme: this.settings.theme,
+          seed: this.settings.seed, mission: this.settings.mission, mapSize: this.settings.mapSize, theme: this.settings.theme, fog: !!this.settings.fog,
           sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5 })),
         });
-        this.broadcast({ t: 'start', state: this.game });
+        for (const cl of this.clients.values()) if (cl.connected) this.send(cl.id, { t: 'start', state: this.viewFor(cl.id, this.game) });
         this.pushLobby();
         return this.scheduleAI();
       }
@@ -236,7 +250,7 @@ export class Room {
         if (g.sides[side].ctrl !== id) return err('Not your side');
         const r = applyCommand(g, side, msg.cmd);
         if (!r.ok) return err(r.error);
-        this.broadcast({ t: 'update', events: r.events, state: g, seq: g.seq });
+        this.broadcastGame(r.events);
         return this.scheduleAI(r.events);
       }
       case 'concede': {
@@ -245,7 +259,7 @@ export class Room {
         g.sides.forEach((s, i) => {
           if (s.ctrl === id && !s.conceded && (msg.side === undefined || msg.side === i)) {
             const r = applyCommand(g, i, { type: 'concede' });
-            this.broadcast({ t: 'update', events: r.events, state: g, seq: g.seq });
+            this.broadcastGame(r.events);
           }
         });
         return this.scheduleAI();
@@ -291,7 +305,7 @@ export class Room {
     let r = applyCommand(g, side, cmd);
     if (!r.ok && cmd.id !== undefined) r = applyCommand(g, side, { type: 'end', id: cmd.id });
     if (!r.ok) return;
-    this.broadcast({ t: 'update', events: r.events, state: g, seq: g.seq });
+    this.broadcastGame(r.events);
     this.scheduleAI(r.events);
   }
 

@@ -300,7 +300,7 @@ export class Renderer {
       if (!v.animating) this.placeMech(v, m);
       this.updateMechLook(v, m);
     }
-    for (const [id, v] of this.mechs) if (!seen.has(id)) { this.mechGroup.remove(v.model.root); v.label.remove(); this.mechs.delete(id); }
+    for (const [id, v] of this.mechs) if (!seen.has(id)) { this.mechGroup.remove(v.model.root); v.label.remove(); if (v.ghost) this.world.remove(v.ghost); this.mechs.delete(id); }
     // item
     const it = state.item;
     if (it && !it.gone) {
@@ -318,11 +318,35 @@ export class Renderer {
   }
 
   placeMech(v, m) {
+    if (m.hidden) { v.model.root.visible = false; this.placeGhost(v, m); return; }
+    if (v.ghost) v.ghost.visible = false;
     const p = hexWorld(m.x, m.y);
     v.model.root.position.set(p.x, this.tileTop(m.x, m.y), p.z);
     v.model.root.rotation.y = facingRot(m.f);
     v.model.root.visible = !m.exited;
     v.label.style.display = m.exited ? 'none' : '';
+  }
+
+  // Fog of war: a faded marker where an unseen enemy was last spotted
+  placeGhost(v, m) {
+    const g = m.ghost;
+    if (!g || m.dead || m.exited) { if (v.ghost) v.ghost.visible = false; return; }
+    if (!v.ghost) {
+      const grp = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.74, 6), new THREE.MeshBasicMaterial({ color: v.color, transparent: true, opacity: 0.4, depthWrite: false }));
+      ring.rotation.x = -Math.PI / 2; ring.rotation.z = Math.PI / 6; ring.position.y = 0.04; grp.add(ring);
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 1.3, 6, 1, true), new THREE.MeshBasicMaterial({ color: v.color, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+      col.position.y = 0.66; grp.add(col);
+      const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.3, 3), new THREE.MeshBasicMaterial({ color: v.color, transparent: true, opacity: 0.5, depthWrite: false }));
+      arrow.rotation.x = Math.PI / 2; arrow.position.set(0, 0.06, 0.55); grp.add(arrow);
+      v.ghostCol = col;
+      this.world.add(grp);
+      v.ghost = grp;
+    }
+    const p = hexWorld(g.x, g.y);
+    v.ghost.position.set(p.x, this.tileTop(g.x, g.y), p.z);
+    v.ghost.rotation.y = facingRot(g.f);
+    v.ghost.visible = true;
   }
 
   updateMechLook(v, m) {
@@ -740,18 +764,22 @@ export class Renderer {
         v.model.torso.rotation.y += (v.wantYaw - v.model.torso.rotation.y) * Math.min(1, dt * 6);
         v.model.body.position.y = Math.sin(this.time * 1.6 + v.id) * 0.01 + v.model.vOffset;
       }
-      if ((v.damaged || m.dead) && this.quality !== 'low' && Math.random() < dt * (m.dead ? 8 : 4)) {
+      if ((v.damaged || m.dead) && !m.hidden && this.quality !== 'low' && Math.random() < dt * (m.dead ? 8 : 4)) {
         const p = v.model.root.position.clone(); p.y += v.model.height * (m.dead ? 0.4 : 0.8);
         this.spawn(p, { color: m.dead ? '#2c2c2c' : '#4a4a4a', size: 0.3, speed: 0.25, rise: 0.9, life: 2.2, normal: true, opacity: 0.5, grow: 3 });
         if (m.dead && Math.random() < 0.4) this.spawn(p, { color: '#ff7a2a', size: 0.25, speed: 0.4, rise: 0.4, life: 0.5 });
       }
-      if (m.heat >= 14 && !m.dead && Math.random() < dt * 3) {
+      if (m.heat >= 14 && !m.dead && !m.hidden && Math.random() < dt * 3) {
         const p = v.model.root.position.clone(); p.y += v.model.height * 0.85;
         this.spawn(p, { color: '#dfe6ea', size: 0.2, speed: 0.3, rise: 0.7, life: 1.2, normal: true, opacity: 0.35, grow: 2.5 });
       }
       // label
       const lp = v.model.root.position.clone(); lp.y += v.model.height + 0.35;
-      const s = this.project(lp);
+      let s = this.project(lp);
+      const ghosted = m.hidden && v.ghost && v.ghost.visible;
+      if (m.hidden && !ghosted) { v.label.style.display = 'none'; continue; }
+      v.label.classList.toggle('ghost', !!ghosted);
+      if (ghosted) { lp.copy(v.ghost.position); lp.y += 1.5; s = this.project(lp); if (v.ghostCol) v.ghostCol.material.opacity = 0.08 + pulse * 0.08; }
       if (s.behind || m.exited || s.x < rect.left - 50 || s.x > rect.right + 50) v.label.style.display = 'none';
       else { v.label.style.display = ''; v.label.style.transform = `translate(${s.x - rect.left}px, ${s.y - rect.top}px) translate(-50%, -100%)`; v.label.classList.toggle('act', !!v.active); }
     }
@@ -795,6 +823,7 @@ export class Renderer {
         case 'move': if (v) await this.animMove(v, e, sp); break;
         case 'shot': case 'melee': {
           if (!v) break;
+          this.unfog(v, state.mechs[e.id]); this.unfog(this.mechs.get(e.target), state.mechs[e.target]);
           const key = e.id + ':' + e.target;
           if (this.framed !== key || !this.onScreen(e.id) || !this.onScreen(e.target)) { this.frameMechs(e.id, e.target); await this.settleFraming(e.id, e.target); }
           if (e.k === 'shot') await this.animShot(v, this.mechs.get(e.target), e, state, sp);
@@ -855,9 +884,22 @@ export class Renderer {
     v.animating = false;
   }
 
+  // a mech that was out of sight steps (or shoots) into view
+  unfog(v, m) {
+    if (!v || v.model.root.visible || !m || m.exited) return;
+    if (!m.hidden) this.placeMech(v, m);
+    v.model.root.visible = true;
+    if (v.ghost) v.ghost.visible = false;
+  }
+
   async animMove(v, e, sp) {
     const path = e.path;
     const root = v.model.root;
+    if (!root.visible && !v.state.exited) { // coming out of the fog of war
+      const p0 = hexWorld(path[0].x, path[0].y);
+      root.position.set(p0.x, this.tileTop(path[0].x, path[0].y), p0.z); root.rotation.y = facingRot(path[0].f);
+      root.visible = true; if (v.ghost) v.ghost.visible = false;
+    }
     const tracked = e.mode === 'track' || e.mode === 'cruise' || e.mode === 'flank';
     if (v.model.wheels.length && e.mode !== 'jump' && e.mode !== 'stand') await this.animConvert(v, tracked, sp, false);
     v.animating = true;

@@ -17,7 +17,7 @@ export function createGame(setup) {
   const seed = setup.seed ?? Math.floor(Math.random() * 1e9);
   const map = generateMap(seed, setup.mapSize || 'M', setup.theme || 'temperate');
   const st = {
-    v: 1, seed, rng: hashSeed('dice' + seed), mission: mission.id, map, round: 0, over: false,
+    v: 1, seed, rng: hashSeed('dice' + seed), mission: mission.id, map, round: 0, over: false, fog: !!setup.fog, seen: {},
     sides: [], teams: [], mechs: [], order: [], turnIdx: 0, act: null, item: null, winner: null, log: [], seq: 0,
   };
   const teamOfSide = assignTeams(setup.sides.slice(0, nSides), mission);
@@ -89,7 +89,39 @@ export function createGame(setup) {
     }
   }
   startRound(st, []);
+  updateSighting(st);
   return st;
+}
+
+// ---------------------------------------------------------------- fog of war
+// With fog of war on, a team only sees enemy mechs that one of its own mechs has line of
+// sight to (or is standing next to). Firing gives a mech away to the team it shot at for
+// the rest of the round. Wrecks stay visible. Each team remembers where it last saw
+// every enemy (st.seen), which the AI and the "last seen" markers use.
+export function visibleTo(st, team, m) {
+  if (!st.fog || m.dead || (m.team ?? m.side) === team) return true;
+  if (m.exited || m.hidden) return false;
+  if (m.reveal && m.reveal.r === st.round && m.reveal.t === team) return true;
+  for (const f of st.mechs) {
+    if ((f.team ?? f.side) !== team || !operational(f) || f.hidden) continue;
+    if (distance(f.x, f.y, m.x, m.y) <= 1 || lineOfSight(st, f.x, f.y, m.x, m.y).ok) return true;
+  }
+  return false;
+}
+export function hexSeenBy(st, team, x, y, exceptId) {
+  for (const f of st.mechs) {
+    if ((f.team ?? f.side) !== team || !operational(f) || f.hidden || f.id === exceptId) continue;
+    if (distance(f.x, f.y, x, y) <= 1 || lineOfSight(st, f.x, f.y, x, y).ok) return true;
+  }
+  return false;
+}
+export function updateSighting(st) {
+  if (!st.fog) return;
+  st.seen = st.seen || {};
+  st.teams.forEach((_, t) => {
+    const mem = st.seen[t] = st.seen[t] || {};
+    for (const m of st.mechs) if ((m.team ?? m.side) !== t && operational(m) && visibleTo(st, t, m)) mem[m.id] = { x: m.x, y: m.y, f: m.f, r: st.round };
+  });
 }
 
 // Work out a team number for each force. Objective missions always have exactly two
@@ -146,6 +178,7 @@ export const secondsElapsed = (st) => Math.max(0, st.round - 1) * ROUND_SECONDS;
 
 function log(st, ev, text, extra) {
   st.log.push(text);
+  if (st.fog) { st.logIds = st.logIds || []; st.logIds.push(extra && extra.id !== undefined ? extra.id : -1); if (st.logIds.length > 60) st.logIds.shift(); }
   if (st.log.length > 60) st.log.shift();
   ev.push({ k: 'log', text, ...(extra || {}) });
 }
@@ -233,7 +266,7 @@ export function availMP(m, mode) {
 export const moveKind = (mode) => (mode === 'track' || mode === 'cruise' ? 'walk' : mode === 'flank' ? 'run' : mode);
 export function dissipation(st, m) {
   const t = tileOf(st, m.x, m.y);
-  const depth = TERRAIN[t].depth || 0;
+  const depth = (TERRAIN[t] && TERRAIN[t].depth) || 0;
   return Math.max(0, m.hs - m.hsLost) + depth * 2;
 }
 export function heatToHit(h) { return h >= 24 ? 4 : h >= 17 ? 3 : h >= 13 ? 2 : h >= 8 ? 1 : 0; }
@@ -395,6 +428,7 @@ export function toHit(st, att, tgt, w, opts = {}) {
   const mods = [];
   const add = (label, v) => { if (v) mods.push({ label, v }); };
   if (!operational(tgt) || !isEnemy(tgt, att)) return { ok: false, reason: 'Invalid target', tn: 99, mods };
+  if (tgt.hidden || tgt.x < 0) return { ok: false, reason: 'No line of sight', tn: 99, mods };
   const dist = distance(pos.x, pos.y, tgt.x, tgt.y);
   const los = opts.los || lineOfSight(st, pos.x, pos.y, tgt.x, tgt.y);
   if (!los.ok) return { ok: false, reason: 'No line of sight', tn: 99, mods, dist };
@@ -472,17 +506,17 @@ function pilotHit(st, m, n, ev, why) {
   m.pilot.hits += n;
   ev.push({ k: 'pilot', id: m.id, hits: m.pilot.hits });
   if (m.pilot.hits >= 6) {
-    log(st, ev, `MechWarrior ${m.pilot.name} (${m.design}) is killed!`, { tone: 'bad', side: m.side });
+    log(st, ev, `MechWarrior ${m.pilot.name} (${m.design}) is killed!`, { tone: 'bad', id: m.id, side: m.side });
     destroyMech(st, m, ev, null, 'pilot killed');
     return;
   }
-  log(st, ev, `${m.pilot.name} is injured${why ? ' (' + why + ')' : ''} — ${m.pilot.hits}/6 hits`, { side: m.side });
+  log(st, ev, `${m.pilot.name} is injured${why ? ' (' + why + ')' : ''} — ${m.pilot.hits}/6 hits`, { id: m.id, side: m.side });
   if (!m.pilot.ko) {
     const tn = [0, 3, 5, 7, 10, 11][m.pilot.hits];
     const r = roll2d6(st);
     if (r < tn) {
       m.pilot.ko = true;
-      log(st, ev, `${m.pilot.name} is unconscious!`, { tone: 'bad', side: m.side });
+      log(st, ev, `${m.pilot.name} is unconscious!`, { tone: 'bad', id: m.id, side: m.side });
       ev.push({ k: 'ko', id: m.id });
     }
   }
@@ -492,7 +526,7 @@ function destroyMech(st, m, ev, by, why) {
   if (m.dead) return;
   m.dead = true;
   ev.push({ k: 'destroyed', id: m.id, by: by ? by.id : -1 });
-  log(st, ev, `${m.design} (${m.pilot.name}) is DESTROYED${why ? ' — ' + why : ''}!`, { tone: 'kill', side: m.side });
+  log(st, ev, `${m.design} (${m.pilot.name}) is DESTROYED${why ? ' — ' + why : ''}!`, { tone: 'kill', id: m.id, side: m.side });
   if (by && isEnemy(by, m)) by.stats.kills++;
   dropItem(st, m, ev);
   if (st.mission === 'spy' && st.item && st.item.carrier === m.id) {
@@ -521,7 +555,7 @@ function destroyLocation(st, m, loc, ev, by) {
   REAR_ZONE[loc] >= 0 && (m.armor[REAR_ZONE[loc]] = 0);
   m.weapons.forEach((w) => { if (w.loc === loc) w.ok = false; });
   ev.push({ k: 'locgone', id: m.id, loc });
-  log(st, ev, `${m.design}'s ${locName(bodyOf(m), loc)} is blown off!`, { tone: 'crit', side: m.side });
+  log(st, ev, `${m.design}'s ${locName(bodyOf(m), loc)} is blown off!`, { tone: 'crit', id: m.id, side: m.side });
   if (loc === 0 || loc === 2) { destroyMech(st, m, ev, by, loc === 0 ? 'head destroyed' : 'center torso destroyed'); return; }
   if (loc === 1) destroyLocation(st, m, 4, ev, by);
   if (loc === 3) destroyLocation(st, m, 5, ev, by);
@@ -536,7 +570,7 @@ function fall(st, m, ev, why) {
   if (m.dead || m.prone || !canFall(m)) return;
   m.prone = true;
   ev.push({ k: 'fall', id: m.id });
-  log(st, ev, `${m.design} falls! (${why})`, { tone: 'bad', side: m.side });
+  log(st, ev, `${m.design} falls! (${why})`, { tone: 'bad', id: m.id, side: m.side });
   const dmg = Math.ceil(m.tons / 10);
   const hl = rollLocation(st, 'F', m);
   applyDamage(st, m, hl.loc, false, dmg, ev, null, { noFall: true });
@@ -579,7 +613,7 @@ function ammoExplosion(st, m, w, ev, by) {
   w.ammo = 0;
   const loc = w.aloc >= 0 ? w.aloc : w.loc;
   ev.push({ k: 'boom', id: m.id, loc, dmg });
-  log(st, ev, `AMMO EXPLOSION! ${m.design}'s ${W.short} ammo cooks off for ${dmg} damage!`, { tone: 'crit', side: m.side });
+  log(st, ev, `AMMO EXPLOSION! ${m.design}'s ${W.short} ammo cooks off for ${dmg} damage!`, { tone: 'crit', id: m.id, side: m.side });
   applyDamage(st, m, loc, false, dmg, ev, by, { internalOnly: true });
   pilotHit(st, m, 2, ev, 'ammo explosion');
 }
@@ -592,7 +626,7 @@ function applyCrit(st, m, loc, ev, by) {
   const code = m.crit[loc][s];
   m.critHit[loc][s] = 1;
   ev.push({ k: 'crit', id: m.id, loc, code });
-  log(st, ev, `CRITICAL: ${m.design} — ${critName(code, bodyOf(m))} hit (${locName(bodyOf(m), loc)})`, { tone: 'crit', side: m.side });
+  log(st, ev, `CRITICAL: ${m.design} — ${critName(code, bodyOf(m))} hit (${locName(bodyOf(m), loc)})`, { tone: 'crit', id: m.id, side: m.side });
   if (code <= 16) {
     const w = m.weapons.find((w) => w.loc === loc && s >= w.slot && s < w.slot + w.slots && w.ok) ||
       m.weapons.find((w) => w.loc === loc && w.t === code && w.ok);
@@ -676,7 +710,7 @@ function afterMove(st, m, ev) {
     if (mis.carriers.includes(m.team) && !m.carrying) {
       it.carrier = m.id; m.carrying = true;
       ev.push({ k: 'pickup', id: m.id });
-      log(st, ev, `${m.design} picks up the ${it.name}!`, { tone: 'info', side: m.side });
+      log(st, ev, `${m.design} picks up the ${it.name}!`, { tone: 'info', id: m.id, side: m.side });
     }
   }
   if (it && it.carrier === m.id) { it.x = m.x; it.y = m.y; }
@@ -697,7 +731,7 @@ function afterMove(st, m, ev) {
   if (exit) {
     m.exited = true;
     ev.push({ k: 'exit', id: m.id });
-    log(st, ev, `${m.design} leaves the battlefield.`, { tone: 'info', side: m.side });
+    log(st, ev, `${m.design} leaves the battlefield.`, { tone: 'info', id: m.id, side: m.side });
     if (winNow) setWinner(st, ev, m.team, winNow);
     return true;
   }
@@ -760,14 +794,14 @@ function startRound(st, ev) {
     if (!operational(m)) continue;
     if (m.pilot.ko) {
       const tn = [0, 3, 5, 7, 10, 11][Math.min(5, m.pilot.hits)];
-      if (roll2d6(st) >= tn) { m.pilot.ko = false; log(st, ev, `${m.pilot.name} wakes up.`, { side: m.side }); ev.push({ k: 'wake', id: m.id }); }
+      if (roll2d6(st) >= tn) { m.pilot.ko = false; log(st, ev, `${m.pilot.name} wakes up.`, { id: m.id, side: m.side }); ev.push({ k: 'wake', id: m.id }); }
       else { m.activated = true; m.lastMove = { mode: 'stand', hexes: 0 }; coolDown(st, m, ev); }
     }
     if (m.shutdown && !m.dead) {
       m.activated = true; m.lastMove = { mode: 'stand', hexes: 0 };
       coolDown(st, m, ev);
       const tn = shutdownTN(m.heat);
-      if (m.heat < 30 && (tn === 0 || roll2d6(st) >= tn)) { m.shutdown = false; log(st, ev, `${m.design} restarts its reactor.`, { side: m.side }); ev.push({ k: 'restart', id: m.id }); }
+      if (m.heat < 30 && (tn === 0 || roll2d6(st) >= tn)) { m.shutdown = false; log(st, ev, `${m.design} restarts its reactor.`, { id: m.id, side: m.side }); ev.push({ k: 'restart', id: m.id }); }
     }
   }
   st.turnIdx = 0;
@@ -815,13 +849,13 @@ function endActivation(st, m, ev) {
       if (r < tn) {
         m.shutdown = true;
         ev.push({ k: 'shutdown', id: m.id });
-        log(st, ev, `${m.design} overheats and SHUTS DOWN! (heat ${m.heat})`, { tone: 'bad', side: m.side });
+        log(st, ev, `${m.design} overheats and SHUTS DOWN! (heat ${m.heat})`, { tone: 'bad', id: m.id, side: m.side });
       }
     }
     const at = ammoTN(m.heat);
     if (at && roll2d6(st) < at) {
       const w = m.weapons.find((w) => w.ammo > 0);
-      if (w) { log(st, ev, `${m.design}'s ammo cooks off from the heat!`, { tone: 'crit', side: m.side }); ammoExplosion(st, m, w, ev, null); }
+      if (w) { log(st, ev, `${m.design}'s ammo cooks off from the heat!`, { tone: 'crit', id: m.id, side: m.side }); ammoExplosion(st, m, w, ev, null); }
     }
     if (m.lifeSupport && m.heat >= 15 && !m.dead) pilotHit(st, m, m.heat >= 26 ? 2 : 1, ev, 'life support failure');
   }
@@ -890,7 +924,7 @@ export function applyCommand(st, side, cmd) {
       act.heatGen += realMode === 'jump' ? Math.max(3, hexes) : MOVE_HEAT[heatMode] || 0;
       act.phase = 'attack';
       ev.push({ k: 'move', id: m.id, path, mode: realMode, vmode: m.vmode });
-      if (wasProne) log(st, ev, `${m.design} stands up.`, { side: m.side });
+      if (wasProne) log(st, ev, `${m.design} stands up.`, { id: m.id, side: m.side });
       if (m.mot === 'tracks' && mode !== 'jump') {
         const nm = mode === 'track' ? 'vehicle' : 'mech';
         if (nm !== m.vmode) { m.vmode = nm; ev.push({ k: 'mode', id: m.id, vmode: nm }); }
@@ -898,7 +932,7 @@ export function applyCommand(st, side, cmd) {
       if (convert) {
         m.vmode = m.vmode === 'vehicle' ? 'mech' : 'vehicle';
         ev.push({ k: 'convert', id: m.id, vmode: m.vmode });
-        log(st, ev, `${m.design} converts to ${m.vmode === 'vehicle' ? 'vehicle' : 'BattleMech'} mode.`, { side: m.side, tone: 'info' });
+        log(st, ev, `${m.design} converts to ${m.vmode === 'vehicle' ? 'vehicle' : 'BattleMech'} mode.`, { id: m.id, side: m.side, tone: 'info' });
       }
       if (realMode === 'jump' && legState(m).legsGone + m.gyroHits > 0) pilotingCheck(st, m, 0, 'landing', ev);
       if (afterMove(st, m, ev)) { if (!st.over) { st.act = act; endActivation(st, m, ev); } break; }
@@ -935,6 +969,7 @@ export function applyCommand(st, side, cmd) {
     default: return fail('Unknown command');
   }
   st.seq++;
+  updateSighting(st);
   return { ok: true, events: ev };
 }
 
@@ -950,6 +985,7 @@ function clusterHits(st, n) {
 
 function fireWeapons(st, m, tgt, weapons, ev) {
   const dir = attackDirection(st, m.x, m.y, tgt);
+  m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
   m.f = m.f; // torso stays; arcs already validated
   let volley = 0;
   const startPilot = tgt.pilot.hits;
@@ -997,12 +1033,13 @@ function fireWeapons(st, m, tgt, weapons, ev) {
     }
   }
   const nh = ev.filter((e) => e.k === 'shot' && e.hit).length;
-  log(st, ev, `${m.design} fires ${weapons.length} weapon${weapons.length > 1 ? 's' : ''} at ${tgt.design}: ${nh} hit, ${volley} damage.`, { side: m.side, tone: volley ? 'hit' : 'miss' });
+  log(st, ev, `${m.design} fires ${weapons.length} weapon${weapons.length > 1 ? 's' : ''} at ${tgt.design}: ${nh} hit, ${volley} damage.`, { id: m.id, side: m.side, tone: volley ? 'hit' : 'miss' });
   if (volley >= 20 && !tgt.dead) pilotingCheck(st, tgt, 1, 'heavy damage', ev);
   void startPilot;
 }
 
 function physical(st, m, tgt, kind, th, ev) {
+  m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
   const r = roll2d6(st);
   const hit = r >= th.tn;
   const dir = attackDirection(st, m.x, m.y, tgt);
@@ -1025,12 +1062,12 @@ function physical(st, m, tgt, kind, th, ev) {
   }
   ev.push({ k: 'melee', id: m.id, target: tgt.id, kind, hit, tn: th.tn, roll: r, dmg, loc });
   if (hit) {
-    log(st, ev, `${m.design} ${kind === 'punch' ? 'punches' : 'kicks'} ${tgt.design} for ${dmg} damage!`, { side: m.side, tone: 'hit' });
+    log(st, ev, `${m.design} ${kind === 'punch' ? 'punches' : 'kicks'} ${tgt.design} for ${dmg} damage!`, { id: m.id, side: m.side, tone: 'hit' });
     applyDamage(st, tgt, loc, rear, dmg, ev, m);
     if (loc === 0 && !tgt.dead) pilotHit(st, tgt, 1, ev, 'head hit');
     if (kind === 'kick' && !tgt.dead) pilotingCheck(st, tgt, 0, 'kicked', ev);
   } else {
-    log(st, ev, `${m.design}'s ${kind} misses.`, { side: m.side, tone: 'miss' });
+    log(st, ev, `${m.design}'s ${kind} misses.`, { id: m.id, side: m.side, tone: 'miss' });
     if (kind === 'kick') pilotingCheck(st, m, 0, 'missed kick', ev);
   }
 }
