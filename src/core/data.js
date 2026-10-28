@@ -1,8 +1,8 @@
-import { MECHS } from './mechdata.js';
-export { MECHS };
+import { MECHS as DISK_MECHS } from './mechdata.js';
+import { EXTRA_MECHS } from './extradata.js';
 
-export const VERSION = '1.7.0';
-export const PROTOCOL = 2;
+export const VERSION = '1.8.0';
+export const PROTOCOL = 3;
 
 // Weapon types, in the original program's order.
 // kind: b=ballistic, m=missile, e=energy. n = missiles per volley. snd = sound family
@@ -26,22 +26,45 @@ export const WEAPONS = [
   { name: 'Plasma Cannon', short: 'PLASMA', kind: 'e', n: 1, snd: 'plasma', fx: 'plasma' },
 ];
 
-// 8 structural locations
-export const LOC = { H: 0, LT: 1, CT: 2, RT: 3, LA: 4, RA: 5, LL: 6, RL: 7 };
-export const LOC_NAMES = ['Head', 'Left Torso', 'Center Torso', 'Right Torso', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg'];
-export const LOC_SHORT = ['HD', 'LT', 'CT', 'RT', 'LA', 'RA', 'LL', 'RL'];
-// 11 armour zones (original order)
+// Structural locations. 0-7 are the original eight; tripods add a centre leg (8).
+// On a four-legged mech, locations 4/5 are the FRONT legs and 6/7 the rear legs (as in
+// BattleTech, where a quad's "arm" hit-location results strike its front legs).
+export const LOC = { H: 0, LT: 1, CT: 2, RT: 3, LA: 4, RA: 5, LL: 6, RL: 7, CL: 8 };
+export const LOC_NAMES = ['Head', 'Left Torso', 'Center Torso', 'Right Torso', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg', 'Center Leg'];
+export const LOC_SHORT = ['HD', 'LT', 'CT', 'RT', 'LA', 'RA', 'LL', 'RL', 'CL'];
+const QUAD_NAMES = ['Head', 'Left Torso', 'Center Torso', 'Right Torso', 'Front Left Leg', 'Front Right Leg', 'Rear Left Leg', 'Rear Right Leg'];
+const QUAD_SHORT = ['HD', 'LT', 'CT', 'RT', 'FLL', 'FRL', 'RLL', 'RRL'];
+// Armour zones: the original 11, plus 11 = centre leg on tripods
 export const ZONE_NAMES = ['Head', 'Left Torso', 'Center Torso', 'Right Torso', 'Left Back Torso', 'Center Back Torso',
-  'Right Back Torso', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg'];
-export const ZONE_LOC = [0, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7];
-export const FRONT_ZONE = [0, 1, 2, 3, 7, 8, 9, 10];
-export const REAR_ZONE = [-1, 4, 5, 6, -1, -1, -1, -1];
-// Where damage goes when a location is gone
-export const TRANSFER = [-1, 2, -1, 2, 1, 3, 1, 3];
+  'Right Back Torso', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg', 'Center Leg'];
+export const ZONE_LOC = [0, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8];
+export const FRONT_ZONE = [0, 1, 2, 3, 7, 8, 9, 10, 11];
+export const REAR_ZONE = [-1, 4, 5, 6, -1, -1, -1, -1, -1];
+// Where damage goes when a location is gone (a centre leg transfers to the centre torso)
+export const TRANSFER = [-1, 2, -1, 2, 1, 3, 1, 3, 2];
+
+// ---- chassis: 'biped' (default), 'quad' (four legs, no arms) or 'tripod' (two arms, three legs)
+export const BODIES = ['biped', 'quad', 'tripod'];
+export const BODY_NAMES = { biped: 'Biped', quad: 'Four-legged', tripod: 'Tripod' };
+export const bodyOf = (m) => (m && m.body) || 'biped';
+export function legLocs(body) { return body === 'quad' ? [4, 5, 6, 7] : body === 'tripod' ? [6, 7, 8] : [6, 7]; }
+export function armLocs(body) { return body === 'quad' ? [] : [4, 5]; }
+export function nLocs(body) { return body === 'tripod' ? 9 : 8; }
+export function nZones(body) { return body === 'tripod' ? 12 : 11; }
+export function locName(body, loc) { return body === 'quad' ? QUAD_NAMES[loc] : LOC_NAMES[loc]; }
+export function locShort(body, loc) { return body === 'quad' ? QUAD_SHORT[loc] : LOC_SHORT[loc]; }
+// Leg actuators per location: [hip, upper leg, lower leg, foot]
+export const LEG_ACT = { 4: [53, 54, 55, 56], 5: [57, 58, 59, 60], 6: [37, 38, 39, 40], 7: [41, 42, 43, 44], 8: [61, 62, 63, 64] };
+export const ARM_ACT = { 4: [29, 30, 31, 32], 5: [33, 34, 35, 36] };
+// Motive systems: undefined, 'tracks' (BattleMech tracks, any chassis) or 'quadvee'
+// (Clan QuadVee: a four-legged mech that converts into a tracked vehicle)
+export const MOTIVE_NAMES = { tracks: 'Tracks', quadvee: 'QuadVee' };
+export const CODE_TRACKS = 65, CODE_CONVERSION = 66, CODE_EQUIP = 67;
 
 // Critical item codes from the original crit tables
-export function critName(code) {
+export function critName(code, body) {
   if (code < 0) return 'Empty';
+  if (body === 'quad' && code >= 37 && code <= 44) return 'Rear ' + critName(code);
   if (code <= 16) return WEAPONS[code].name;
   if (code <= 28) return 'Ammo ' + WEAPONS[code - 17].short;
   const names = {
@@ -50,6 +73,10 @@ export function critName(code) {
     37: 'Left Hip', 38: 'L. Upper Leg Actuator', 39: 'L. Lower Leg Actuator', 40: 'L. Foot Actuator',
     41: 'Right Hip', 42: 'R. Upper Leg Actuator', 43: 'R. Lower Leg Actuator', 44: 'R. Foot Actuator',
     45: 'Life Support', 46: 'Sensors', 47: 'Cockpit', 48: 'Engine', 49: 'Gyro', 50: 'Jump Jet', 51: 'Heat Sink', 52: 'Jump Jet',
+    53: 'FL Hip', 54: 'FL Upper Leg Actuator', 55: 'FL Lower Leg Actuator', 56: 'FL Foot Actuator',
+    57: 'FR Hip', 58: 'FR Upper Leg Actuator', 59: 'FR Lower Leg Actuator', 60: 'FR Foot Actuator',
+    61: 'C. Hip', 62: 'C. Upper Leg Actuator', 63: 'C. Lower Leg Actuator', 64: 'C. Foot Actuator',
+    65: 'Tracks', 66: 'Conversion Gear', 67: 'Equipment',
   };
   return names[code] || 'Structure';
 }
@@ -136,6 +163,19 @@ export const MISSIONS = [
       'Intelligence reports that the enemy is preparing for a major offensive. We expect them to scout our position prior to the assault. Your unit is ordered to intercept this scouting team and destroy them. The enemy mechs must not be allowed to return with intelligence data on our position. ALL enemy mechs must be captured or destroyed.'],
   },
 ];
+
+// The disk's Goliath is BattleTech's four-legged assault mech. The original game had no
+// quad rules, so it stored the front legs as arms; give it its proper chassis.
+function asQuad(m) {
+  const legI = m.i[6];
+  const cr = m.cr.map((r) => r.slice());
+  for (const [loc, codes] of [[4, LEG_ACT[4]], [5, LEG_ACT[5]]]) {
+    const old = ARM_ACT[loc];
+    cr[loc] = cr[loc].map((c) => (old.includes(c) ? codes[old.indexOf(c)] : c));
+  }
+  return { ...m, body: 'quad', i: [m.i[0], m.i[1], m.i[2], m.i[3], legI, legI, m.i[6], m.i[7]], cr };
+}
+export const MECHS = [...DISK_MECHS.map((m) => (m.n === 'Goliath' ? asQuad(m) : m)), ...EXTRA_MECHS];
 
 export function mechByName(n) { return MECHS.find((m) => m.n === n); }
 export function mechBV(m) {

@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { center, DIR_ANGLE, toAxial, fromAxial, neighbor } from '../core/hex.js';
 import { WEAPONS, TERRAIN } from '../core/data.js';
 import { totalArmor, maxArmor, operational } from '../core/rules.js';
-import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims } from './models.js';
+import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims, rollTracks } from './models.js';
 import { sfx } from './audio.js';
 import { input } from './input.js';
 
@@ -281,7 +281,7 @@ export class Renderer {
       let v = this.mechs.get(m.id);
       if (!v) {
         const color = state.sides[m.side].color;
-        const model = buildMech({ design: m.design, tons: m.tons, cls: m.cls, weapons: m.weapons, jump: m.jumpBase }, color);
+        const model = buildMech({ design: m.design, tons: m.tons, cls: m.cls, weapons: m.weapons, jump: m.jumpBase, body: m.body, mot: m.mot }, color);
         const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.74, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false }));
         ring.rotation.x = -Math.PI / 2; ring.rotation.z = Math.PI / 6;
         model.root.add(ring);
@@ -335,11 +335,13 @@ export class Renderer {
     }
     if (!dead) {
       const proneNow = m.prone;
-      if (proneNow !== v.prone) { v.prone = proneNow; mdl.body.rotation.x = proneNow ? 1.35 : 0; mdl.body.position.y = proneNow ? 0.2 : 0; }
+      if (proneNow !== v.prone) { v.prone = proneNow; this.poseProne(v, proneNow ? 1 : 0); }
+      // tracked / QuadVee vehicle pose
+      if (!v.animating && !proneNow && (m.vmode === 'vehicle') !== (mdl.vk > 0.5)) mdl.setVehicle(m.vmode === 'vehicle' ? 1 : 0);
       mdl.mats.glass.emissiveIntensity = m.shutdown || m.pilot.ko ? 0.05 : 1.1;
       // limbs blown off
       mdl.arms.forEach((a) => { a.sh.visible = !m.locGone[a.loc]; });
-      mdl.legs.forEach((l, i) => { l.hip.scale.y = m.locGone[6 + (l.side < 0 ? 0 : 1)] ? 0.35 : 1; void i; });
+      mdl.legs.forEach((l) => { l.hip.scale.y = m.locGone[l.loc] ? 0.35 : 1; });
     }
     v.damaged = !dead && totalArmor(m) / maxArmor(m) < 0.5;
     v.label.classList.toggle('dead', dead);
@@ -715,7 +717,7 @@ export class Renderer {
       // idle sway & torso tracking
       if (!v.animating && !m.dead && !v.prone) {
         v.model.torso.rotation.y += (v.wantYaw - v.model.torso.rotation.y) * Math.min(1, dt * 6);
-        v.model.body.position.y = Math.sin(this.time * 1.6 + v.id) * 0.01;
+        v.model.body.position.y = Math.sin(this.time * 1.6 + v.id) * 0.01 + v.model.vOffset;
       }
       if ((v.damaged || m.dead) && this.quality !== 'low' && Math.random() < dt * (m.dead ? 8 : 4)) {
         const p = v.model.root.position.clone(); p.y += v.model.height * (m.dead ? 0.4 : 0.8);
@@ -781,7 +783,8 @@ export class Renderer {
         case 'boom': if (v) { const p = this.bodyPoint(v, 0.2); this.explosion(p, 1.6); sfx('boom', { size: 1.3, pan: this.panOf(p) }); await sleep(400 / sp); } break;
         case 'locgone': if (v) { const p = this.bodyPoint(v); this.explosion(p, 0.8); this.spawn(p, { n: 16, color: '#ffe08a', size: 0.12, speed: 5, life: 0.5, gravity: 9, grow: 0 }); } break;
         case 'crit': if (v) { this.float(v, critShort(e.code), 'crit'); } break;
-        case 'fall': if (v) { v.prone = true; await this.tween(300 / sp, (k) => { v.model.body.rotation.x = 1.35 * k; v.model.body.position.y = 0.2 * k; }); sfx('melee', { pan: 0 }); this.spawn(v.model.root.position.clone().add(new THREE.Vector3(0, 0.2, 0)), { n: 12, color: '#8a7a66', size: 0.4, speed: 1.5, life: 1, normal: true, opacity: 0.5 }); } break;
+        case 'convert': case 'mode': if (v) { await this.animConvert(v, e.vmode === 'vehicle', sp, e.k === 'convert'); } break;
+        case 'fall': if (v) { v.prone = true; await this.tween(300 / sp, (k) => this.poseProne(v, k)); sfx('melee', { pan: 0 }); this.spawn(v.model.root.position.clone().add(new THREE.Vector3(0, 0.2, 0)), { n: 12, color: '#8a7a66', size: 0.4, speed: 1.5, life: 1, normal: true, opacity: 0.5 }); } break;
         case 'destroyed': if (v) { const p = this.bodyPoint(v, 0.1); this.explosion(p, 2.2); sfx('boom', { size: 1.6, pan: this.panOf(p) }); v.state = state.mechs[e.id]; this.updateMechLook(v, state.mechs[e.id]); this.float(v, 'DESTROYED', 'kill'); await sleep(650 / sp); } break;
         case 'shutdown': if (v) { this.float(v, 'SHUTDOWN', 'crit'); v.model.mats.glass.emissiveIntensity = 0.05; sfx('alarm'); } break;
         case 'ko': if (v) this.float(v, 'PILOT KO', 'crit'); break;
@@ -806,10 +809,37 @@ export class Renderer {
     });
   }
 
-  async animMove(v, e, sp) {
+  // A four-legged mech topples onto its side; anything else falls on its face
+  poseProne(v, k) {
+    const b = v.model.body;
+    if (v.model.quad) { b.rotation.z = 1.25 * k; b.rotation.x = 0; b.position.y = 0.15 * k; }
+    else { b.rotation.x = 1.35 * k; b.rotation.z = 0; b.position.y = 0.2 * k; }
+    if (k > 0 && v.model.vk) v.model.setVehicle(0);
+  }
+
+  // Kneel onto the tracks (or stand back up); a QuadVee conversion gets a bit of ceremony
+  async animConvert(v, toVehicle, sp, convert) {
+    const mdl = v.model;
+    if (!mdl.wheels.length || (mdl.vk > 0.5) === toVehicle) return;
     v.animating = true;
+    if (convert) { sfx('servo'); this.float(v, toVehicle ? 'VEHICLE MODE' : 'MECH MODE', 'info'); }
+    const k0 = mdl.vk, k1 = toVehicle ? 1 : 0;
+    await this.tween((convert ? 750 : 420) / sp, (k) => {
+      const kk = k * k * (3 - 2 * k);
+      mdl.setVehicle(k0 + (k1 - k0) * kk);
+      if (convert) mdl.torso.rotation.y = Math.sin(k * Math.PI) * 0.6;
+    });
+    if (convert) { sfx('step', { gain: 1.2, rate: 0.6 }); this.spawn(mdl.root.position.clone(), { n: 8, color: '#8a7a66', size: 0.35, speed: 1.2, life: 0.7, normal: true, opacity: 0.4 }); }
+    mdl.torso.rotation.y = 0;
+    v.animating = false;
+  }
+
+  async animMove(v, e, sp) {
     const path = e.path;
     const root = v.model.root;
+    const tracked = e.mode === 'track' || e.mode === 'cruise' || e.mode === 'flank';
+    if (v.model.wheels.length && e.mode !== 'jump' && e.mode !== 'stand') await this.animConvert(v, tracked, sp, false);
+    v.animating = true;
     if (e.mode === 'jump') {
       const a = path[0], b = path[path.length - 1];
       const pa = hexWorld(a.x, a.y); pa.y = this.tileTop(a.x, a.y);
@@ -830,7 +860,7 @@ export class Renderer {
       sfx('step', { gain: 1.6, rate: 0.7 });
       this.spawn(pb, { n: 10, color: '#8a7a66', size: 0.4, speed: 1.6, life: 0.8, normal: true, opacity: 0.45 });
     } else {
-      const stepMs = (e.mode === 'run' ? 170 : 240) / sp;
+      const stepMs = (e.mode === 'run' || e.mode === 'flank' ? 170 : tracked ? 200 : 240) / sp;
       for (let i = 1; i < path.length; i++) {
         const a = path[i - 1], b = path[i];
         if (a.x === b.x && a.y === b.y) {
@@ -845,16 +875,19 @@ export class Renderer {
         const back = neighbor(a.x, a.y, a.f + 3);
         const reverse = back.x === b.x && back.y === b.y;
         this.focusHex(b.x, b.y);
+        let lastK = 0;
         await this.tween(stepMs, (k) => {
           root.position.lerpVectors(pa, pb, k);
+          if (tracked) { rollTracks(v.model, (reverse ? -1 : 1) * (k - lastK) * 9); lastK = k; return; }
           root.position.y += Math.sin(k * Math.PI) * 0.06;
           v.walk += (reverse ? -1 : 1) * 0.2;
           const sw = Math.sin(k * Math.PI * 2) * 0.55;
-          v.model.legs.forEach((l, j) => { l.hip.rotation.x = (j ? sw : -sw); l.knee.rotation.x = (l.bird ? 0.7 : 0) + Math.max(0, (j ? -sw : sw)) * 0.8; });
+          v.model.legs.forEach((l) => { const g = sw * l.gait; l.hip.rotation.x = g; l.knee.rotation.x = l.rest + Math.max(0, -g) * 0.8; });
         });
-        sfx('step', { gain: 0.5 + v.state.tons / 120, rate: 1.4 - v.state.tons / 200, pan: this.panOf(pb) });
+        if (tracked) sfx('servo', { gain: 0.35, pan: this.panOf(pb) });
+        else sfx('step', { gain: 0.5 + v.state.tons / 120, rate: 1.4 - v.state.tons / 200, pan: this.panOf(pb) });
       }
-      v.model.legs.forEach((l) => { l.hip.rotation.x = 0; l.knee.rotation.x = l.bird ? 0.7 : 0; });
+      if (!tracked) v.model.legs.forEach((l) => { l.hip.rotation.x = 0; l.knee.rotation.x = l.rest; });
     }
     const last = path[path.length - 1];
     root.rotation.y = facingRot(last.f);

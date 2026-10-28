@@ -1,7 +1,7 @@
 // Computer opponent. Returns one command at a time for the active AI side.
 import { WEAPONS, TERRAIN } from './data.js';
 import { computeReach, canEndAt, toHit, availableMechs, operational, canAct, lineOfSight, inArc, missionOf,
-  walkMP, expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide } from './rules.js';
+  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT } from './rules.js';
 import { distance, relBearing } from './hex.js';
 import { chance, nextRand } from './rng.js';
 
@@ -69,16 +69,26 @@ function evalPositions(st, m) {
   };
   const myWoods = (x, y) => TERRAIN[tileOf(st, x, y)].woods + (TERRAIN[tileOf(st, x, y)].depth === 1 ? 1 : 0);
   const best = { score: -1e9, cmd: null };
-  const modes = ['walk', 'run', 'jump'];
   const fragile = totalArmor(m) / maxArmor(m);
-  for (const mode of modes) {
-    const reach = computeReach(st, m, mode);
-    if (reach.mp <= 0 && mode !== 'walk') continue;
-    const moveHeatBase = mode === 'walk' ? 1 : mode === 'run' ? 2 : 3;
+  // QuadVees also weigh converting: vehicle mode makes no movement heat and can't fall,
+  // BattleMech mode can kick and jump
+  const plans = moveModes(m).map((mode) => ({ mode, convert: false }));
+  if (canConvert(st, m)) for (const mode of moveModes(m)) if (mode !== 'jump') plans.push({ mode, convert: true });
+  let nearest = 99;
+  for (const e of enemies) nearest = Math.min(nearest, distance(m.x, m.y, e.x, e.y));
+  for (const { mode, convert } of plans) {
+    const reach = computeReach(st, m, mode, { convert });
+    if (reach.mp < 0 || (reach.mp <= 0 && mode !== moveModes(m)[0])) continue;
+    const moveHeatBase = mode === 'jump' ? 3 : MOVE_HEAT[convert ? moveKind(mode) : mode] || 0;
+    let convBias = 0;
+    if (convert) {
+      const toVehicle = m.vmode !== 'vehicle';
+      convBias = toVehicle ? (m.heat >= 6 ? 2 : 0) + (nearest > 9 ? 1.5 : -1) : (nearest <= 3 ? 2 : -0.5);
+    }
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       let anyF = false;
       for (let f = 0; f < 6; f++) if (isFinite(reach.cost[(y * w + x) * 6 + f])) { anyF = true; break; }
-      if (!anyF || !canEndAt(st, m, x, y)) continue;
+      if (!anyF || !canEndAt(st, m, x, y, reach)) continue;
       const info = hexInfo(x, y);
       // Threat at this hex
       for (let f = 0; f < 6; f++) {
@@ -88,7 +98,7 @@ function evalPositions(st, m) {
         const stand = hexes === 0 && x === m.x && y === m.y;
         const md = stand ? 'stand' : mode;
         const mvHeat = stand ? (f === m.f ? 0 : 1) : (mode === 'jump' ? Math.max(3, hexes) : moveHeatBase);
-        const atkMod = { stand: 0, walk: 1, run: 2, jump: 3 }[md];
+        const atkMod = { stand: 0, walk: 1, run: 2, jump: 3 }[moveKind(md)];
         const defMod = moveMod(md, hexes);
         let offense = 0, threat = 0;
         for (const it of info) {
@@ -126,7 +136,7 @@ function evalPositions(st, m) {
             threat += ed * rearF * (e.activated ? 0.6 : 1);
           }
         }
-        let score = offense * 1.2 - threat * (0.35 + (1 - fragile) * 0.5);
+        let score = offense * 1.2 - threat * (0.35 + (1 - fragile) * 0.5) + convBias;
         if (goal) {
           const gd = goal.edge ? (goal.edge === 'E' ? w - 1 - x : x) : distance(x, y, goal.x, goal.y);
           score -= gd * goal.weight;
@@ -145,13 +155,13 @@ function evalPositions(st, m) {
         score += st.map.e[y * w + x] * 0.4;
         if (m.heat + mvHeat - dissipation(st, m) > 8) score -= (m.heat + mvHeat - dissipation(st, m) - 8) * 1.5;
         score += nextRand({ rng: (x * 73856093) ^ (y * 19349663) ^ (f * 83492791) ^ st.seq }) * 0.3;
-        if (score > best.score) best.score = score, best.cmd = { type: 'move', id: m.id, x, y, f, mode };
+        if (score > best.score) best.score = score, best.cmd = { type: 'move', id: m.id, x, y, f, mode, ...(convert ? { convert: true } : {}) };
       }
     }
   }
   return best.cmd;
 }
-function moveModE(e) { return moveMod(e.lastMove.mode, e.lastMove.hexes) + (e.prone ? 1 : 0); }
+function moveModE(e) { return moveMod(moveKind(e.lastMove.mode), e.lastMove.hexes) + (e.prone ? 1 : 0); }
 
 function chooseAttack(st, m) {
   const enemies = st.mechs.filter((e) => operational(e) && e.team !== m.team);
@@ -188,7 +198,8 @@ export function aiNextCommand(st) {
     const av = availableMechs(st, side);
     if (!av.length) return null;
     // slow mechs commit first, fast ones keep their options open
-    av.sort((a, b) => walkMP(a) - walkMP(b) || a.id - b.id);
+    const speed = (x) => availMP(x, moveModes(x)[0]);
+    av.sort((a, b) => speed(a) - speed(b) || a.id - b.id);
     const m = av[0];
     return evalPositions(st, m) || { type: 'end', id: m.id };
   }

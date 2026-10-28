@@ -185,40 +185,74 @@ function mergeStatic(obj) {
   }
 }
 
+// Track unit bolted to the front of a shin. Standing, it's armour; kneeling (tracked or
+// QuadVee vehicle mode) the shin swings back and the track runs along the ground.
+function trackPod(knee, legW, legLen, s, mats, M, back = false) {
+  const pod = new THREE.Group();
+  const L = legLen * 0.86, T = legW * 0.62, W = legW * 1.5;
+  pod.position.set(0, -legLen * 0.48, (back ? -1 : 1) * (legW * 0.62 + T / 2));
+  knee.add(pod);
+  M(plate(W, L, T, 0.3), mats.dark, 0, 0, 0, pod);
+  M(plate(W * 0.9, L * 0.82, 0.02 * s), mats.joint, 0, 0, T / 2 + 0.004 * s, pod);
+  for (const e of [-1, 1]) { const cap = M(cyl(T * 0.5, T * 0.5, W * 1.02, 12), mats.dark, 0, e * L / 2, 0, pod); cap.rotation.z = Math.PI / 2; }
+  for (let k = 0; k < 9; k++) M(box(W * 1.04, 0.012 * s, 0.014 * s), mats.tube, 0, -L * 0.45 + k * L * 0.112, T / 2 + 0.008 * s, pod);
+  const wheels = [];
+  for (const side of [-1, 1]) for (let k = 0; k < 3; k++) {
+    const g = new THREE.Group(); g.position.set(side * (W / 2 + 0.006 * s), -L * 0.3 + k * L * 0.3, 0); pod.add(g);
+    const w = new THREE.Mesh(cyl(T * 0.36, T * 0.36, 0.02 * s, 10), mats.joint); w.rotation.z = Math.PI / 2; w.userData.keep = true; g.add(w);
+    const sp = new THREE.Mesh(box(0.024 * s, T * 0.6, 0.012 * s), mats.trim); sp.userData.keep = true; g.add(sp);
+    wheels.push(g);
+  }
+  return { pod, wheels, below: legW * 0.62 + T };
+}
+
 export function buildMech(spec, colorHex) {
   const { design, tons, cls } = spec;
+  const body3 = spec.body || 'biped';
+  const quad = body3 === 'quad', tripod = body3 === 'tripod';
   const h = hashStr(design);
-  const s = 0.62 + tons / 260 + cls * 0.03;
+  const s = 0.62 + Math.min(tons, 140) / 260 + cls * 0.03;
   const mats = mechMaterials(colorHex);
-  const arche = (cls <= 1 && h % 4 === 0) ? 'walker' : (cls === 3 || (cls === 2 && h % 3 === 0)) ? 'brute' : 'humanoid';
+  const arche = quad ? 'humanoid' : (cls <= 1 && h % 4 === 0) ? 'walker' : (cls === 3 || (cls === 2 && h % 3 === 0)) ? 'brute' : 'humanoid';
   const brute = arche === 'brute', walker = arche === 'walker';
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
   const M = (geo, mat, x, y, z, parent) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
 
-  const legLen = (0.5 + (h % 5) * 0.02 + (walker ? 0.1 : cls === 0 ? 0.06 : 0) - (brute ? 0.03 : 0)) * s;
-  const torsoW = (0.6 + cls * 0.08 + (h % 5) * 0.02 + (brute ? 0.12 : 0)) * s;
-  const torsoH = (0.42 + cls * 0.04 + (brute ? 0.05 : 0)) * s;
-  const torsoD = (0.4 + (h % 3) * 0.04) * s;
-  const hipY = legLen * 1.9;
+  const legLen = (0.5 + (h % 5) * 0.02 + (walker ? 0.1 : cls === 0 ? 0.06 : 0) - (brute ? 0.03 : 0)) * s * (quad ? 0.82 : 1);
+  const torsoW = (0.6 + cls * 0.08 + (h % 5) * 0.02 + (brute ? 0.12 : 0)) * s * (quad ? 0.92 : 1);
+  const torsoH = (0.42 + cls * 0.04 + (brute ? 0.05 : 0)) * s * (quad ? 0.78 : 1);
+  const torsoD = (0.4 + (h % 3) * 0.04) * s * (quad ? 1.9 : tripod ? 1.15 : 1);
+  const hipY = legLen * (quad ? 1.75 : 1.9);
   const legW = (0.16 + cls * 0.02 + (brute ? 0.03 : 0)) * s;
+  const qv = spec.mot === 'quadvee';
 
-  // ---- legs
+  // ---- legs. Bipeds alternate; four-legged mechs trot (diagonal pairs move together);
+  // a tripod's centre leg sits behind and moves with the right leg.
+  const LEGS = quad ? [
+    { side: -1, x: -torsoW * 0.47, z: torsoD * 0.33, loc: 4, gait: -1 }, { side: 1, x: torsoW * 0.47, z: torsoD * 0.33, loc: 5, gait: 1 },
+    { side: -1, x: -torsoW * 0.47, z: -torsoD * 0.33, loc: 6, gait: 1, bird: true }, { side: 1, x: torsoW * 0.47, z: -torsoD * 0.33, loc: 7, gait: -1, bird: true },
+  ] : tripod ? [
+    { side: -1, x: -torsoW * 0.33, z: torsoD * 0.12, loc: 6, gait: -1 }, { side: 1, x: torsoW * 0.33, z: torsoD * 0.12, loc: 7, gait: 1 },
+    { side: 0, x: 0, z: -torsoD * 0.52, loc: 8, gait: 0.8, bird: true },
+  ] : [{ side: -1, x: -torsoW * 0.27, z: 0, loc: 6, gait: -1 }, { side: 1, x: torsoW * 0.27, z: 0, loc: 7, gait: 1 }];
   const legs = [];
-  for (const side of [-1, 1]) {
+  for (const L of LEGS) {
+    const side = L.side;
+    const bird = walker || !!L.bird;
     const hip = new THREE.Group();
-    hip.position.set(side * torsoW * 0.27, hipY, 0);
+    hip.position.set(L.x, hipY, L.z);
     const hj = M(cyl(0.085 * s, 0.085 * s, 0.12 * s, 12), mats.joint, side * 0.02 * s, 0, 0, hip); hj.rotation.z = Math.PI / 2;
     const thigh = new THREE.Group(); hip.add(thigh);
-    if (walker) thigh.rotation.x = -0.35;
+    if (bird) thigh.rotation.x = -0.35;
     M(plate(legW, legLen, legW * 1.35), mats.body, 0, -legLen / 2, 0, thigh);
     M(plate(legW * 1.1, legLen * 0.6, 0.05 * s), mats.trim, 0, -legLen * 0.42, legW * 0.72, thigh);
     M(cyl(0.016 * s, 0.016 * s, legLen * 0.8, 6), mats.chrome, 0, -legLen * 0.5, -legW * 0.85, thigh);
     const knee = new THREE.Group();
     knee.position.y = -legLen;
     hip.add(knee);
-    if (walker) { knee.position.z = -Math.sin(0.35) * legLen; knee.position.y = -Math.cos(0.35) * legLen; }
+    if (bird) { knee.position.z = -Math.sin(0.35) * legLen; knee.position.y = -Math.cos(0.35) * legLen; }
     const kj = M(cyl(0.075 * s, 0.075 * s, legW * 1.2, 12), mats.joint, 0, 0, 0, knee); kj.rotation.z = Math.PI / 2;
     const guard = M(plate(legW * 1.2, 0.16 * s, 0.09 * s), mats.trim, 0, 0.02 * s, legW * 0.6, knee); guard.rotation.x = -0.35;
     M(plate(legW * 0.92, legLen * 0.95, legW * 1.2), mats.dark, 0, -legLen * 0.47, 0, knee);
@@ -229,13 +263,18 @@ export function buildMech(spec, colorHex) {
     M(plate(legW * 1.45, 0.07 * s, 0.3 * s), mats.dark, 0, -0.03 * s, 0.05 * s, ankle);
     for (const a of [-0.45, 0, 0.45]) { const toe = M(plate(0.05 * s, 0.05 * s, 0.14 * s), mats.body, Math.sin(a) * 0.08 * s, -0.035 * s, 0.2 * s + Math.cos(a) * 0.02 * s, ankle); toe.rotation.y = a; }
     const heel = M(plate(0.05 * s, 0.05 * s, 0.12 * s), mats.body, 0, -0.035 * s, -0.13 * s, ankle); heel.rotation.x = 0.3;
-    if (walker) { ankle.rotation.x = -0.35; knee.rotation.x = 0.7; }
+    if (bird) { ankle.rotation.x = -0.35; knee.rotation.x = 0.7; }
+    // A QuadVee folds its legs flat under the hull: front legs fold back (tracks on the backs
+    // of the shins), rear legs fold forward (tracks on the fronts)
+    const front = quad && (L.loc === 4 || L.loc === 5);
+    const pod = spec.mot ? trackPod(knee, legW, legLen, s, mats, M, qv && front) : null;
+    if (quad && !qv) hip.rotation.z = side * 0.12;
     body.add(hip);
-    legs.push({ hip, knee, side, bird: walker });
+    legs.push({ hip, knee, side, bird, loc: L.loc, gait: L.gait, rest: bird ? 0.7 : 0, pod, fold: qv ? (front ? 1 : -1) : 0, splay: quad && !qv ? side * 0.12 : 0 });
   }
 
   // ---- pelvis & skirts
-  M(plate(torsoW * 0.6, 0.15 * s, torsoD * 0.72), mats.joint, 0, hipY, 0, body);
+  M(plate(torsoW * (quad ? 0.8 : 0.6), 0.15 * s, torsoD * 0.72), mats.joint, 0, hipY, 0, body);
   const skirtF = M(plate(torsoW * 0.36, 0.14 * s, 0.04 * s), mats.trim, 0, hipY - 0.07 * s, torsoD * 0.4, body); skirtF.rotation.x = 0.25;
   for (const side of [-1, 1]) { const sk = M(plate(0.04 * s, 0.15 * s, torsoD * 0.6), mats.body, side * torsoW * 0.36, hipY - 0.06 * s, 0, body); sk.rotation.z = side * 0.25; }
 
@@ -277,7 +316,7 @@ export function buildMech(spec, colorHex) {
   // ---- head / cockpit
   const head = new THREE.Group();
   torso.add(head);
-  const headStyle = walker ? 'nose' : brute ? 'sunk' : ['dome', 'slit', 'canopy'][h % 3];
+  const headStyle = quad || walker ? 'nose' : brute ? 'sunk' : ['dome', 'slit', 'canopy'][h % 3];
   if (headStyle === 'nose') {
     head.position.set(0, coreH * 0.62, torsoD / 2 + 0.06 * s);
     const n = M(plate(torsoW * 0.36, 0.17 * s, 0.24 * s), mats.body, 0, 0, 0.06 * s, head); n.rotation.x = 0.12;
@@ -339,16 +378,16 @@ export function buildMech(spec, colorHex) {
   }
   byLoc(2).forEach((w, k, arr) => mount(w, torso, new THREE.Vector3((k - (arr.length - 1) / 2) * 0.1 * s, coreH * (WEAPONS[w.t].kind === 'm' ? 0.28 : 0.4), torsoD / 2 + 0.03 * s), false));
   byLoc(0).forEach((w, k, arr) => mount(w, head, new THREE.Vector3(arr.length === 1 ? 0.14 * s : (k - 0.5) * 0.28 * s, 0.1 * s, 0.06 * s), false, 0.9));
-  for (const [loc, li] of [[6, 0], [7, 1]]) byLoc(loc).forEach((w, k) => mount(w, legs[li].hip, new THREE.Vector3(legs[li].side * legW * 0.8, -0.18 * s - k * 0.12 * s, 0.1 * s), false, 0.85));
+  for (const lg of legs) if (!(lg.loc <= 5 && !quad)) byLoc(lg.loc).forEach((w, k) => mount(w, lg.hip, new THREE.Vector3((lg.side || 1) * legW * 0.8, -0.18 * s - k * 0.12 * s, 0.1 * s), false, 0.85));
   if (!muzzles[2]) { const m = new THREE.Object3D(); m.position.set(0, torsoH * 0.55, torsoD / 2 + 0.06 * s); torso.add(m); muzzles[2] = m; }
   if (!muzzles[0]) { const m = new THREE.Object3D(); m.position.set(0, torsoH + 0.12 * s, torsoD * 0.3); torso.add(m); muzzles[0] = m; }
   if (!muzzles[1]) { const m = new THREE.Object3D(); m.position.set(-torsoW * 0.37, torsoH * 0.5, torsoD / 2 + 0.03); torso.add(m); muzzles[1] = m; }
   if (!muzzles[3]) { const m = new THREE.Object3D(); m.position.set(torsoW * 0.37, torsoH * 0.5, torsoD / 2 + 0.03); torso.add(m); muzzles[3] = m; }
 
-  // ---- arms
+  // ---- arms (none on a four-legged mech: its locations 4/5 are the front legs)
   const arms = [];
   const ARM_SLOTS = [[0, 0], [-0.08, 0.07], [0.08, 0.07], [0, 0.14], [-0.08, -0.07], [0.08, -0.07]];
-  for (const [side, loc] of [[-1, 4], [1, 5]]) {
+  for (const [side, loc] of quad ? [] : [[-1, 4], [1, 5]]) {
     const sh = new THREE.Group();
     sh.position.set(side * (torsoW * 0.52 + 0.06 * s), torsoH * 0.78, 0);
     torso.add(sh);
@@ -386,9 +425,35 @@ export function buildMech(spec, colorHex) {
   mergeStatic(root);
   for (const wm of Object.values(weaponMounts)) wm.group.traverse((o) => { if (o.isMesh) wm.meshes.push(o); });
   root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  for (const lg of legs) if (!muzzles[lg.loc]) { const mz = new THREE.Object3D(); mz.position.set(0, -0.2 * s, 0.12 * s); lg.hip.add(mz); muzzles[lg.loc] = mz; }
   const height = hipY + torsoH + 0.3 * s;
-  return { root, body, torso, head, legs, arms, muzzles, weaponMounts, jets, mats, height, scale: s };
+  // Kneeling pose for tracks / QuadVee vehicle mode: thighs straight down, shins swung back
+  // flat so the track pods carry the mech, body lowered onto them.
+  const pods = legs.filter((l) => l.pod);
+  const kneelDrop = !pods.length ? 0 : qv ? hipY - pods[0].pod.below - 0.02 * s : Math.min(...pods.map((l) => hipY + l.knee.position.y - l.pod.below));
+  const wheels = pods.flatMap((l) => l.pod.wheels);
+  const model = { root, body, torso, head, legs, arms, muzzles, weaponMounts, jets, mats, height, scale: s, quad, tripod, wheels, vk: 0 };
+  model.setVehicle = (k) => {
+    model.vk = k;
+    if (!pods.length) return;
+    for (const l of legs) {
+      if (l.fold) { // thigh flat (back for front legs, forward for rear legs), shin folded under it
+        l.hip.rotation.x = l.fold * (Math.PI / 2) * k;
+        l.knee.rotation.x = l.rest + (-l.fold * Math.PI - l.rest) * k;
+        l.hip.rotation.z = 0;
+      } else {
+        l.hip.rotation.x = 0;
+        l.knee.rotation.x = l.rest + (Math.PI / 2 - l.rest) * k;
+      }
+    }
+    model.vOffset = -kneelDrop * k;
+    body.position.y = model.vOffset;
+  };
+  model.vOffset = 0;
+  return model;
 }
+// Spin road wheels while driving
+export function rollTracks(model, dist) { for (const w of model.wheels) w.rotation.x += dist; }
 
 export function buildItem(kind) {
   const g = new THREE.Group();

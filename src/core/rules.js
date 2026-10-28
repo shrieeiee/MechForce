@@ -1,7 +1,7 @@
 // MechForce rules engine. Pure functions over a JSON-serialisable state object.
 // The same code runs on the host server, in local games, and inside the AI.
-import { MECHS, WEAPONS, MISSIONS, TERRAIN, ZONE_LOC, FRONT_ZONE, REAR_ZONE, TRANSFER, LOC_NAMES, critName,
-  SIDE_COLORS, SIDE_NAMES, PILOT_NAMES, mechByName } from './data.js';
+import { MECHS, WEAPONS, MISSIONS, TERRAIN, FRONT_ZONE, REAR_ZONE, TRANSFER, critName, locName,
+  SIDE_COLORS, SIDE_NAMES, PILOT_NAMES, mechByName, bodyOf, legLocs, LEG_ACT, CODE_TRACKS, CODE_CONVERSION } from './data.js';
 import { generateMap, deployZone, inMap } from './map.js';
 import { buildTemplate } from './custom.js';
 import { neighbor, distance, relBearing, line, facingToward, turnCost, center } from './hex.js';
@@ -120,11 +120,12 @@ function makeMech(id, side, tpl, pilot, x, y, f, sd) {
   });
   return {
     id, side, design: tpl.n, custom: !!tpl.custom, cls: tpl.c, tons: tpl.t, pilot: { name: pilot, gun: sd.gunnery, pil: sd.piloting, hits: 0, ko: false },
+    body: tpl.body || 'biped', mot: tpl.mot || null, vmode: 'mech',
     x, y, f, armor: tpl.a.slice(), armorMax: tpl.a.slice(), internal: tpl.i.slice(), internalMax: tpl.i.slice(),
     crit: tpl.cr.map((r) => r.slice()), critHit: tpl.cr.map((r) => r.map(() => 0)),
     weapons, heat: 0, hs: tpl.hs, hsLost: 0, walkBase: tpl.w, jumpBase: tpl.j, jumpLost: 0,
     engineHits: 0, gyroHits: 0, sensorHits: 0, lifeSupport: false, actu: [],
-    locGone: [0, 0, 0, 0, 0, 0, 0, 0], prone: false, shutdown: false, dead: false, exited: false,
+    locGone: tpl.i.map(() => 0), prone: false, shutdown: false, dead: false, exited: false,
     activated: false, lastMove: { mode: 'stand', hexes: 0 }, carrying: false, scouted: false,
     stats: { dmg: 0, kills: 0, shots: 0, hits: 0 },
   };
@@ -150,34 +151,86 @@ function log(st, ev, text, extra) {
 }
 
 // ---------------------------------------------------------------- derived stats
+// Chassis rules follow BattleTech: Total Warfare for bipeds, four-legged mechs and tracks,
+// Interstellar Operations for tripods and QuadVees.
 function actuCount(m, codes) { return m.actu.filter((c) => codes.includes(c)).length; }
+export const isQuadVee = (m) => m.mot === 'quadvee';
+export const onTracks = (m) => (m.mot === 'tracks' || m.mot === 'quadvee') && m.vmode === 'vehicle';
 export function legState(m) {
-  const legsGone = m.locGone[6] + m.locGone[7];
-  const hips = actuCount(m, [37, 41]);
-  const legAct = actuCount(m, [38, 39, 40, 42, 43, 44]);
-  return { legsGone, hips, legAct };
+  const legs = legLocs(bodyOf(m));
+  let legsGone = 0, hips = 0, legAct = 0;
+  for (const l of legs) {
+    if (m.locGone[l]) { legsGone++; continue; }
+    const [hip, ...rest] = LEG_ACT[l];
+    if (m.actu.includes(hip)) hips++;
+    legAct += actuCount(m, rest);
+  }
+  return { legsGone, hips, legAct, nLegs: legs.length };
 }
+function critHitIn(m, loc, code) { const row = m.crit[loc]; return !!row && row.some((c, s) => c === code && m.critHit[loc][s]); }
+// Legs whose track (or, on a QuadVee, conversion gear) no longer works
+export function badTracks(m) {
+  return legLocs(bodyOf(m)).filter((l) => m.locGone[l] || critHitIn(m, l, CODE_TRACKS) || (isQuadVee(m) && critHitIn(m, l, CODE_CONVERSION))).length;
+}
+// Walking MP on legs
 export function walkMP(m) {
-  if (!canAct(m)) return 0;
+  if (!canAct(m) || (isQuadVee(m) && m.vmode === 'vehicle')) return 0;
+  const body = bodyOf(m);
   const { legsGone, hips, legAct } = legState(m);
-  if (legsGone >= 2 || m.gyroHits >= 2 || m.engineHits >= 3) return 0;
+  if (m.gyroHits >= 2 || m.engineHits >= 3) return 0;
+  if (body === 'quad' ? legsGone >= 3 : legsGone >= 2) return 0;
   let w = m.walkBase - legAct - Math.floor(m.heat / 5);
   if (hips) w = Math.ceil(w / (2 * hips));
-  if (legsGone) w = Math.min(w, 1);
+  if (body === 'quad') { if (legsGone === 1) w -= 1; else if (legsGone === 2) w = Math.min(w, 1); }
+  else if (legsGone) w = Math.min(w, 1);
   return Math.max(0, w);
 }
 export function runMP(m) {
   const { legsGone } = legState(m);
-  if (legsGone) return walkMP(m);
+  if (legsGone && !(bodyOf(m) === 'quad' && legsGone === 1)) return walkMP(m);
   return Math.ceil(walkMP(m) * 1.5);
 }
 export function jumpMP(m) {
-  if (!canAct(m) || m.prone) return 0;
+  if (!canAct(m) || m.prone || (isQuadVee(m) && m.vmode === 'vehicle')) return 0;
   const { legsGone } = legState(m);
   let j = m.jumpBase - m.jumpLost;
   if (legsGone) j = Math.floor(j / 2);
   return Math.max(0, j);
 }
+// Tracked movement: BattleMech tracks (cruise speed only) or a QuadVee in vehicle mode.
+// Each lost leg or track takes away its share of the speed; leg actuator and gyro damage don't matter.
+export function trackMP(m) {
+  if (!canAct(m) || !m.mot || m.engineHits >= 3) return 0;
+  if (isQuadVee(m) && m.vmode !== 'vehicle') return 0;
+  const n = legLocs(bodyOf(m)).length, bad = badTracks(m);
+  if (bad >= n) return 0;
+  let mp = m.walkBase;
+  mp -= Math.floor(mp * bad / n);
+  return Math.max(0, mp - Math.floor(m.heat / 5));
+}
+export function flankMP(m) { return isQuadVee(m) && m.vmode === 'vehicle' ? Math.ceil(trackMP(m) * 1.5) : 0; }
+// QuadVee conversion: 2 MP, +1 per damaged leg actuator, conversion gear or track
+export function conversionCost(m) {
+  let c = 2;
+  for (const l of legLocs(bodyOf(m))) m.crit[l].forEach((code, s) => { if (m.critHit[l][s] && (LEG_ACT[l].includes(code) || code === CODE_TRACKS || code === CODE_CONVERSION)) c++; });
+  return c;
+}
+export function canConvert(st, m) {
+  if (!isQuadVee(m) || m.prone || !canAct(m)) return false;
+  return availMP(m, m.vmode === 'vehicle' ? 'cruise' : 'walk') >= conversionCost(m);
+}
+// Movement modes this mech can use right now. Legs: walk/run/jump; BattleMech tracks add
+// 'track' (cruise only); a QuadVee in vehicle mode has 'cruise' and 'flank' instead.
+export const MOVE_HEAT = { walk: 1, run: 2, track: 1, cruise: 0, flank: 0 };
+export function moveModes(m) {
+  if (isQuadVee(m) && m.vmode === 'vehicle') return ['cruise', 'flank'];
+  return m.mot === 'tracks' ? ['walk', 'run', 'jump', 'track'] : ['walk', 'run', 'jump'];
+}
+export function availMP(m, mode) {
+  return mode === 'jump' ? jumpMP(m) : mode === 'run' ? runMP(m) : mode === 'track' || mode === 'cruise' ? trackMP(m) : mode === 'flank' ? flankMP(m) : walkMP(m);
+}
+// What a mode counts as for to-hit purposes
+export const moveKind = (mode) => (mode === 'track' || mode === 'cruise' ? 'walk' : mode === 'flank' ? 'run' : mode);
 export function dissipation(st, m) {
   const t = tileOf(st, m.x, m.y);
   const depth = TERRAIN[t].depth || 0;
@@ -186,26 +239,35 @@ export function dissipation(st, m) {
 export function heatToHit(h) { return h >= 24 ? 4 : h >= 17 ? 3 : h >= 13 ? 2 : h >= 8 ? 1 : 0; }
 
 // ---------------------------------------------------------------- movement
+const TRACKED = { track: 1, cruise: 1, flank: 1 };
 function enterCost(st, m, fx, fy, tx, ty, mode) {
   if (!inMap(st.map, tx, ty)) return -1;
   const t = tileOf(st, tx, ty);
   const de = elevOf(st, tx, ty) - elevOf(st, fx, fy);
-  if (Math.abs(de) > 2) return -1;
-  if (mode === 'run' && t === 5) return -1;
+  if (Math.abs(de) > (TRACKED[mode] ? 1 : 2)) return -1;
+  if ((mode === 'run' || mode === 'flank') && t === 5) return -1;
+  if (TRACKED[mode]) {
+    // tracked movement follows ground-vehicle rules: no heavy woods, and BattleMech tracks
+    // can't be used in water (a QuadVee's sealed hull can)
+    if (t === 2) return -1;
+    if (TERRAIN[t].depth && !isQuadVee(m)) return -1;
+  }
   const o = mechAt(st, tx, ty);
   if (o && isEnemy(o, m)) return -1;
-  return TERRAIN[t].cost + Math.abs(de);
+  return TERRAIN[t].cost + Math.abs(de) * (TRACKED[mode] ? 2 : 1);
 }
 
 // Dijkstra over (hex, facing). Returns reach info for a mode.
-export function computeReach(st, m, mode) {
+export function computeReach(st, m, mode, opts = {}) {
   const { w, h } = st.map;
   const N = w * h * 6;
   const cost = new Float32Array(N).fill(Infinity);
   const prev = new Int32Array(N).fill(-1);
   const steps = new Int16Array(N).fill(0);
-  const mp = mode === 'jump' ? jumpMP(m) : mode === 'run' ? runMP(m) : walkMP(m);
-  const res = { mode, mp, cost, prev, steps, w, h };
+  let mp = moveModes(m).includes(mode) ? availMP(m, mode) : 0;
+  if (opts.convert) mp = canConvert(st, m) && mode !== 'jump' ? mp - conversionCost(m) : -1;
+  const res = { mode, mp, cost, prev, steps, w, h, convert: !!opts.convert };
+  if (mp < 0) return res;
   if (mode === 'jump') {
     if (mp <= 0) return res;
     const s0 = (m.y * w + m.x) * 6 + m.f;
@@ -220,7 +282,11 @@ export function computeReach(st, m, mode) {
   }
   const start = (m.y * w + m.x) * 6 + m.f;
   const startCost = m.prone ? 2 : 0;
-  if (startCost > mp) { cost[start] = 0; res.cantStand = m.prone; return res; }
+  const shift = bodyOf(m) === 'quad' && !TRACKED[mode];
+  // a QuadVee can't convert in water
+  const noEnd = opts.convert ? (x, y) => !!TERRAIN[tileOf(st, x, y)].depth : null;
+  res.noEnd = noEnd;
+  if (startCost > mp) { if (!opts.convert) cost[start] = 0; res.cantStand = m.prone; return res; }
   cost[start] = startCost;
   const heap = [[startCost, start]];
   const push = (c, k) => { heap.push([c, k]); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
@@ -234,12 +300,17 @@ export function computeReach(st, m, mode) {
       const nf = (f + df) % 6, nk = hx * 6 + nf, nc = c + 1;
       if (nc <= mp && nc < cost[nk]) { cost[nk] = nc; prev[nk] = k; steps[nk] = steps[k]; push(nc, nk); }
     }
-    // forward / backward
-    for (const back of mode === 'walk' ? [0, 1] : [0]) {
-      const n = neighbor(x, y, back ? f + 3 : f);
+    // forward / backward, and a four-legged mech's lateral shift (sideways without turning,
+    // +1 MP; the two rear-quarter shifts count as backward movement)
+    const back = mode === 'walk' || mode === 'track' || mode === 'cruise';
+    const dirs = [[0, 0]];
+    if (back) dirs.push([3, 0]);
+    if (shift) { dirs.push([1, 1], [5, 1]); if (back) dirs.push([2, 1], [4, 1]); }
+    for (const [dd, extra] of dirs) {
+      const n = neighbor(x, y, f + dd);
       const ec = enterCost(st, m, x, y, n.x, n.y, mode);
       if (ec < 0) continue;
-      const nc = c + ec + (back ? 0 : 0);
+      const nc = c + ec + extra;
       const nk = (n.y * w + n.x) * 6 + f;
       if (nc <= mp && nc < cost[nk]) { cost[nk] = nc; prev[nk] = k; steps[nk] = steps[k] + 1; push(nc, nk); }
     }
@@ -247,8 +318,9 @@ export function computeReach(st, m, mode) {
   return res;
 }
 
-export function canEndAt(st, m, x, y) {
+export function canEndAt(st, m, x, y, reach) {
   const o = mechAt(st, x, y);
+  if (reach && reach.noEnd && reach.noEnd(x, y)) return false;
   return !o || o.id === m.id;
 }
 
@@ -296,8 +368,9 @@ export function attackDirection(st, ax, ay, t) {
 export function inArc(att, wloc, tx, ty, pos) {
   const p = pos || att;
   const rel = relBearing(p.x, p.y, p.f, tx, ty);
-  if (wloc === 4) return rel >= -120.01 && rel <= 60.01;
-  if (wloc === 5) return rel >= -60.01 && rel <= 120.01;
+  const arms = bodyOf(att) !== 'quad'; // a quad's front legs fire straight ahead
+  if (arms && wloc === 4) return rel >= -120.01 && rel <= 60.01;
+  if (arms && wloc === 5) return rel >= -60.01 && rel <= 120.01;
   return Math.abs(rel) <= 60.01;
 }
 
@@ -309,7 +382,7 @@ function moveMod(lm) {
 }
 
 function armMods(m, loc) {
-  if (loc !== 4 && loc !== 5) return 0;
+  if ((loc !== 4 && loc !== 5) || bodyOf(m) === 'quad') return 0;
   const base = loc === 4 ? 29 : 33;
   if (m.actu.includes(base)) return 4;
   return actuCount(m, [base + 1, base + 2]);
@@ -318,7 +391,7 @@ function armMods(m, loc) {
 // Full to-hit breakdown. pos/mode let the AI evaluate hypothetical positions.
 export function toHit(st, att, tgt, w, opts = {}) {
   const pos = opts.pos || att;
-  const mode = opts.mode || (st.act && st.act.id === att.id ? att.lastMove.mode : 'stand');
+  const mode = moveKind(opts.mode || (st.act && st.act.id === att.id ? att.lastMove.mode : 'stand'));
   const mods = [];
   const add = (label, v) => { if (v) mods.push({ label, v }); };
   if (!operational(tgt) || !isEnemy(tgt, att)) return { ok: false, reason: 'Invalid target', tn: 99, mods };
@@ -340,11 +413,12 @@ export function toHit(st, att, tgt, w, opts = {}) {
     if (dist !== 1) return { ok: false, reason: 'Not adjacent', tn: 99, mods, dist };
     if (!inArc(att, 2, tgt.x, tgt.y, pos)) return { ok: false, reason: 'Out of arc', tn: 99, mods, dist };
     if (Math.abs(elevOf(st, pos.x, pos.y) - elevOf(st, tgt.x, tgt.y)) > 1) return { ok: false, reason: 'Elevation', tn: 99, mods, dist };
+    if (onTracks(att) && isQuadVee(att)) return { ok: false, reason: 'Vehicle mode', tn: 99, mods, dist };
     tn = att.pilot.pil; mods.length = 0; mods.push({ label: 'Piloting', v: att.pilot.pil });
     if (opts.kind === 'kick') add('Kick', -2);
     if (opts.kind === 'punch') {
       const arm = bestPunchArm(att);
-      if (arm < 0) return { ok: false, reason: 'No arms', tn: 99, mods, dist };
+      if (arm < 0) return { ok: false, reason: bodyOf(att) === 'quad' ? 'Four-legged' : 'No arms', tn: 99, mods, dist };
       add('Arm actuators', armMods(att, arm));
     }
     if (opts.kind === 'kick' && legState(att).legsGone) return { ok: false, reason: 'Leg destroyed', tn: 99, mods, dist };
@@ -364,6 +438,7 @@ export function toHit(st, att, tgt, w, opts = {}) {
 
 function bestPunchArm(m) {
   let best = -1, bm = 99;
+  if (bodyOf(m) === 'quad') return -1;
   for (const loc of [4, 5]) {
     if (m.locGone[loc]) continue;
     const md = armMods(m, loc);
@@ -378,9 +453,17 @@ const TABLE = {
   L: { 2: 1, 3: 6, 4: 4, 5: 4, 6: 6, 7: 1, 8: 2, 9: 3, 10: 5, 11: 7, 12: 0 },
   R: { 2: 3, 3: 7, 4: 5, 5: 5, 6: 7, 7: 3, 8: 2, 9: 1, 10: 4, 11: 6, 12: 0 },
 };
-function rollLocation(st, dir) {
+// Standard 'Mech hit location table. On a four-legged mech the arm results strike the front
+// legs (locations 4/5). On a tripod a leg result is re-rolled on 1D6 to pick the leg:
+// 1-2 right, 3-4 centre, 5-6 left (+1 from the left side, -1 from the right).
+function tripodLeg(st, dir) {
+  const r = d6(st) + (dir === 'L' ? 1 : dir === 'R' ? -1 : 0);
+  return r <= 2 ? 7 : r <= 4 ? 8 : 6;
+}
+function rollLocation(st, dir, tgt) {
   const r = roll2d6(st);
-  const loc = TABLE[dir === 'B' ? 'F' : dir][r];
+  let loc = TABLE[dir === 'B' ? 'F' : dir][r];
+  if (tgt && bodyOf(tgt) === 'tripod' && (loc === 6 || loc === 7)) loc = tripodLeg(st, dir);
   return { loc, rear: dir === 'B', tac: r === 2 };
 }
 
@@ -438,33 +521,50 @@ function destroyLocation(st, m, loc, ev, by) {
   REAR_ZONE[loc] >= 0 && (m.armor[REAR_ZONE[loc]] = 0);
   m.weapons.forEach((w) => { if (w.loc === loc) w.ok = false; });
   ev.push({ k: 'locgone', id: m.id, loc });
-  log(st, ev, `${m.design}'s ${LOC_NAMES[loc]} is blown off!`, { tone: 'crit', side: m.side });
+  log(st, ev, `${m.design}'s ${locName(bodyOf(m), loc)} is blown off!`, { tone: 'crit', side: m.side });
   if (loc === 0 || loc === 2) { destroyMech(st, m, ev, by, loc === 0 ? 'head destroyed' : 'center torso destroyed'); return; }
   if (loc === 1) destroyLocation(st, m, 4, ev, by);
   if (loc === 3) destroyLocation(st, m, 5, ev, by);
-  if (loc === 6 || loc === 7) {
+  if (legLocs(bodyOf(m)).includes(loc)) {
     if (!m.prone && !m.dead) fall(st, m, ev, 'leg destroyed');
   }
 }
 
+// A QuadVee in vehicle mode can't fall (it's a tank on four tracks)
+const canFall = (m) => !(isQuadVee(m) && m.vmode === 'vehicle');
 function fall(st, m, ev, why) {
-  if (m.dead || m.prone) return;
+  if (m.dead || m.prone || !canFall(m)) return;
   m.prone = true;
   ev.push({ k: 'fall', id: m.id });
   log(st, ev, `${m.design} falls! (${why})`, { tone: 'bad', side: m.side });
   const dmg = Math.ceil(m.tons / 10);
-  const hl = rollLocation(st, 'F');
+  const hl = rollLocation(st, 'F', m);
   applyDamage(st, m, hl.loc, false, dmg, ev, null, { noFall: true });
   pilotHit(st, m, 1, ev, 'fall');
 }
 
-export function pilotingTN(m, mod = 0) {
+// Piloting skill roll target. Four legs make a steady platform (-2 while all legs work);
+// a tripod gets -1. A quad only takes the +5 leg penalty once two legs are gone.
+export function pilotingMods(m) {
   const { legsGone, hips, legAct } = legState(m);
-  return m.pilot.pil + m.gyroHits * 3 + hips * 2 + legAct + legsGone * 5 + mod;
+  const body = bodyOf(m);
+  const out = [];
+  if (m.gyroHits) out.push(['Gyro damage', m.gyroHits * 3]);
+  if (hips) out.push(['Hip actuators', hips * 2]);
+  if (legAct) out.push(['Leg actuators', legAct]);
+  if (body === 'quad') { if (!legsGone) out.push(['Four legs', -2]); else if (legsGone >= 2) out.push(['Legs destroyed', 5]); }
+  else if (body === 'tripod' && !legsGone) out.push(['Three legs', -1]);
+  else if (legsGone) out.push(['Leg destroyed', legsGone * 5]);
+  return out;
+}
+export function pilotingTN(m, mod = 0) {
+  return m.pilot.pil + pilotingMods(m).reduce((s, [, v]) => s + v, 0) + mod;
 }
 
-function pilotingCheck(st, m, mod, why, ev) {
-  if (m.dead || m.prone) return true;
+// gyroLeg: rolls caused by gyro or leg actuator damage, which a mech running on tracks ignores
+function pilotingCheck(st, m, mod, why, ev, gyroLeg) {
+  if (m.dead || m.prone || !canFall(m)) return true;
+  if (gyroLeg && onTracks(m)) return true;
   const tn = pilotingTN(m, mod);
   const r = roll2d6(st);
   ev.push({ k: 'psr', id: m.id, tn, roll: r, why });
@@ -492,7 +592,7 @@ function applyCrit(st, m, loc, ev, by) {
   const code = m.crit[loc][s];
   m.critHit[loc][s] = 1;
   ev.push({ k: 'crit', id: m.id, loc, code });
-  log(st, ev, `CRITICAL: ${m.design} — ${critName(code)} hit (${LOC_NAMES[loc]})`, { tone: 'crit', side: m.side });
+  log(st, ev, `CRITICAL: ${m.design} — ${critName(code, bodyOf(m))} hit (${locName(bodyOf(m), loc)})`, { tone: 'crit', side: m.side });
   if (code <= 16) {
     const w = m.weapons.find((w) => w.loc === loc && s >= w.slot && s < w.slot + w.slots && w.ok) ||
       m.weapons.find((w) => w.loc === loc && w.t === code && w.ok);
@@ -501,14 +601,14 @@ function applyCrit(st, m, loc, ev, by) {
     const w = m.weapons.find((w) => w.aloc === loc && w.aslot === s && w.ammo > 0) ||
       m.weapons.find((w) => w.t === code - 17 && w.ammo > 0);
     if (w) ammoExplosion(st, m, w, ev, by);
-  } else if (code <= 44) {
+  } else if (code <= 44 || (code >= 53 && code <= 64)) {
     m.actu.push(code);
-    if (code >= 37) pilotingCheck(st, m, 0, 'leg actuator', ev);
+    if (code >= 37) pilotingCheck(st, m, 0, 'leg actuator', ev, true);
   } else if (code === 45) m.lifeSupport = true;
   else if (code === 46) m.sensorHits++;
   else if (code === 47) { log(st, ev, `Cockpit hit! ${m.pilot.name} is killed!`, { tone: 'kill' }); destroyMech(st, m, ev, by, 'cockpit destroyed'); }
   else if (code === 48) { m.engineHits++; if (m.engineHits >= 3) destroyMech(st, m, ev, by, 'engine destroyed'); }
-  else if (code === 49) { m.gyroHits++; pilotingCheck(st, m, 0, 'gyro hit', ev); }
+  else if (code === 49) { m.gyroHits++; pilotingCheck(st, m, 0, 'gyro hit', ev, true); }
   else if (code === 50 || code === 52) m.jumpLost++;
   else if (code === 51) m.hsLost++;
 }
@@ -517,7 +617,7 @@ function rollCrits(st, m, loc, ev, by, force) {
   const r = roll2d6(st);
   let n = r >= 12 ? 3 : r >= 10 ? 2 : r >= 8 ? 1 : 0;
   if (force && !n) return;
-  if (r >= 12 && (loc === 0 || loc >= 4)) { destroyLocation(st, m, loc, ev, by); return; }
+  if (r >= 12 && (loc === 0 || loc >= 4)) { destroyLocation(st, m, loc, ev, by); return; } // limb or head blown off
   for (let i = 0; i < n && !m.dead; i++) applyCrit(st, m, loc, ev, by);
 }
 
@@ -771,10 +871,12 @@ export function applyCommand(st, side, cmd) {
     case 'move': {
       if (act.phase !== 'move') return fail('Already moved');
       const mode = cmd.mode;
-      if (!['walk', 'run', 'jump'].includes(mode)) return fail('Bad mode');
-      const reach = computeReach(st, m, mode);
+      if (!moveModes(m).includes(mode)) return fail('Bad mode');
+      const convert = !!cmd.convert;
+      if (convert && !canConvert(st, m)) return fail('Cannot convert now');
+      const reach = computeReach(st, m, mode, { convert });
       const k = reachKey(reach, cmd.x, cmd.y, cmd.f);
-      if (!inMap(st.map, cmd.x, cmd.y) || !isFinite(reach.cost[k]) || !canEndAt(st, m, cmd.x, cmd.y)) return fail('Unreachable');
+      if (!inMap(st.map, cmd.x, cmd.y) || !isFinite(reach.cost[k]) || !canEndAt(st, m, cmd.x, cmd.y, reach)) return fail('Unreachable');
       const path = pathFrom(reach, cmd.x, cmd.y, cmd.f);
       const hexes = reach.steps[k];
       const wasProne = m.prone && mode !== 'jump';
@@ -783,10 +885,21 @@ export function applyCommand(st, side, cmd) {
       const moved = hexes > 0 || path.length > 1;
       const realMode = !moved ? 'stand' : mode;
       m.lastMove = { mode: realMode, hexes };
-      act.heatGen += realMode === 'walk' ? 1 : realMode === 'run' ? 2 : realMode === 'jump' ? Math.max(3, hexes) : 0;
+      // a QuadVee generates no movement heat in vehicle mode, but does while converting
+      const heatMode = convert && moved ? moveKind(realMode) : realMode;
+      act.heatGen += realMode === 'jump' ? Math.max(3, hexes) : MOVE_HEAT[heatMode] || 0;
       act.phase = 'attack';
-      ev.push({ k: 'move', id: m.id, path, mode: realMode });
+      ev.push({ k: 'move', id: m.id, path, mode: realMode, vmode: m.vmode });
       if (wasProne) log(st, ev, `${m.design} stands up.`, { side: m.side });
+      if (m.mot === 'tracks' && mode !== 'jump') {
+        const nm = mode === 'track' ? 'vehicle' : 'mech';
+        if (nm !== m.vmode) { m.vmode = nm; ev.push({ k: 'mode', id: m.id, vmode: nm }); }
+      }
+      if (convert) {
+        m.vmode = m.vmode === 'vehicle' ? 'mech' : 'vehicle';
+        ev.push({ k: 'convert', id: m.id, vmode: m.vmode });
+        log(st, ev, `${m.design} converts to ${m.vmode === 'vehicle' ? 'vehicle' : 'BattleMech'} mode.`, { side: m.side, tone: 'info' });
+      }
       if (realMode === 'jump' && legState(m).legsGone + m.gyroHits > 0) pilotingCheck(st, m, 0, 'landing', ev);
       if (afterMove(st, m, ev)) { if (!st.over) { st.act = act; endActivation(st, m, ev); } break; }
       if (m.dead) { endActivation(st, m, ev); }
@@ -861,21 +974,21 @@ function fireWeapons(st, m, tgt, weapons, ev) {
         let left = n * w.dmg;
         while (left > 0) {
           const d = Math.min(5, left); left -= d;
-          const hl = rollLocation(st, dir);
+          const hl = rollLocation(st, dir, tgt);
           shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: d });
           applyDamage(st, tgt, hl.loc, hl.rear, d, ev, m, { tac: hl.tac });
           volley += d;
         }
       } else {
         for (let i = 0; i < n; i++) {
-          const hl = rollLocation(st, dir);
+          const hl = rollLocation(st, dir, tgt);
           shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: w.dmg });
           applyDamage(st, tgt, hl.loc, hl.rear, w.dmg, ev, m, { tac: hl.tac });
           volley += w.dmg;
         }
       }
     } else {
-      const hl = rollLocation(st, dir);
+      const hl = rollLocation(st, dir, tgt);
       shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: w.dmg });
       if (hl.loc === 0 && !tgt.dead) pilotHit(st, tgt, 1, ev, 'head hit');
       applyDamage(st, tgt, hl.loc, hl.rear, w.dmg, ev, m, { tac: hl.tac });
@@ -903,8 +1016,12 @@ function physical(st, m, tgt, kind, th, ev) {
     loc = t[d6(st) - 1];
   } else {
     dmg = Math.ceil(m.tons / 5);
-    const t = { F: [7, 7, 7, 6, 6, 6], L: [6, 6, 6, 6, 6, 6], R: [7, 7, 7, 7, 7, 7], B: [7, 7, 7, 6, 6, 6] }[dir];
+    const tb = bodyOf(tgt);
+    const t = tb === 'quad' // kicks land on the legs facing the attacker
+      ? { F: [5, 5, 5, 4, 4, 4], L: [4, 4, 4, 6, 6, 6], R: [5, 5, 5, 7, 7, 7], B: [7, 7, 7, 6, 6, 6] }[dir]
+      : { F: [7, 7, 7, 6, 6, 6], L: [6, 6, 6, 6, 6, 6], R: [7, 7, 7, 7, 7, 7], B: [7, 7, 7, 6, 6, 6] }[dir];
     loc = t[d6(st) - 1];
+    if (tb === 'tripod') loc = tripodLeg(st, dir);
   }
   ev.push({ k: 'melee', id: m.id, target: tgt.id, kind, hit, tn: th.tn, roll: r, dmg, loc });
   if (hit) {

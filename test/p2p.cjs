@@ -28,6 +28,13 @@ const N = +(process.env.N || 2);
   await A.waitForTimeout(800);
   lobby = await A.evaluate(() => window.__mf.lobby);
   console.log('slots now:', lobby.slots.map((s) => s.name + '=' + s.ctrl + (s.ready ? '*' : '')).join(', '));
+  if (process.env.CHASSIS) {
+    await A.evaluate(() => window.__mf.session.send({ t: 'settings', settings: { tonnage: 400 } })); await A.waitForTimeout(300);
+    const L = ['Arion', 'Goliath', 'Triskelion', 'Brahma'], R = ['Harpagos', 'Scorpion', 'Tarantula', 'Barghest'];
+    await A.evaluate((l) => window.__mf.session.send({ t: 'lance', side: 0, lance: l }), L);
+    for (const pp of joiners) await pp.evaluate((r) => { const app = window.__mf; const side = app.lobby.slots.findIndex((s) => s.ctrl === app.session.myId); app.session.send({ t: 'lance', side, lance: r }); app.session.send({ t: 'ready', side, v: true }); }, R);
+    await A.waitForTimeout(800);
+  }
   await A.evaluate(() => window.__mf.session.send({ t: 'start' }));
   await A.waitForTimeout(2500);
   const all = [A, ...joiners];
@@ -37,14 +44,19 @@ const N = +(process.env.N || 2);
   for (let i = 0; i < 40; i++) {
     for (const p of all) {
       const ix = await p.evaluate(() => window.__mf.battle && window.__mf.battle.ix.mode);
-      if (ix === 'move') { await p.keyboard.press('KeyF'); await p.waitForTimeout(100); await p.keyboard.press('Enter'); acts++; }
+      if (ix === 'move') {
+        // drive/convert sometimes so the network carries the new modes
+        const did = await p.evaluate((i) => { const bt = window.__mf.battle; const keys = Object.keys(bt.ix.reach || {}); const k = keys.find((x) => x.includes('+cv') || x === 'track' || x === 'cruise'); if (!k || i % 2) return false; bt.setMoveMode(k); const m = bt.state.mechs[bt.ix.mechId]; const r = bt.ix.reach[k]; for (let y = 0; y < bt.state.map.h; y++) for (let x = 0; x < bt.state.map.w; x++) if ((x !== m.x || y !== m.y) && bt.hexReachable(x, y)) { bt.cursor = { x, y }; bt.enterFacing(x, y); return true; } return false; }, acts);
+        if (did) { await p.waitForTimeout(100); await p.keyboard.press('Enter'); } else { await p.keyboard.press('KeyF'); await p.waitForTimeout(100); await p.keyboard.press('Enter'); }
+        acts++;
+      }
       else if (ix === 'facing') await p.keyboard.press('Enter');
       else if (ix === 'attack') { await p.keyboard.press('KeyF'); acts++; }
       else if (ix === 'briefing' || ix === 'pass') await p.keyboard.press('Enter');
     }
     await A.waitForTimeout(600);
   }
-  const snap = (p) => p.evaluate(() => { const s = window.__mf.battle.state; return JSON.stringify({ seq: s.seq, round: s.round, hp: s.mechs.map((m) => m.armor.reduce((a, b) => a + b, 0)).join(',') }); });
+  const snap = (p) => p.evaluate(() => { const s = window.__mf.battle.state; return JSON.stringify({ seq: s.seq, round: s.round, hp: s.mechs.map((m) => m.armor.reduce((a, b) => a + b, 0)).join(','), vm: s.mechs.map((m) => m.vmode[0]).join('') }); });
   const ss = []; for (const p of all) ss.push(await snap(p));
   ss.forEach((s, i) => console.log(i ? 'peer' + i : 'host ', s));
   console.log('in sync:', ss.every((s) => s === ss[0]), 'actions:', acts);

@@ -21,9 +21,20 @@ Downloads are on the [Releases](../../releases) page. Every push builds all four
 - **All mission orders** with both sides' briefings, word for word: Search & Destroy, Crossing, Hold Position (500 seconds), Find the DataPack, Recover the Memory Cell, Escort the Pepsi, Destroy the Spy, Scouting Run.
 - **The six digitised sounds** (Laser, Cannon, MachineGun, Rocket, Flamer, Crunch), selectable in Settings → Weapon sounds → Original Amiga.
 
+## Four legs, three legs and tracks
+
+Besides two-legged mechs, MechForce plays BattleTech's other chassis by the board game's rules (Total Warfare; Interstellar Operations for tripods and QuadVees):
+
+- **Four-legged** (Goliath, Tarantula, Scorpion, Thunder Fox, Barghest, Sirocco): no arms (no punching, weapons fire forwards), -2 to piloting rolls while all legs work, lateral shift (side-step without turning, +1 MP), -1 MP for the first lost leg and 1 MP with two gone. Arm hit-location results strike the front legs.
+- **Tripods** (Triskelion, Poseidon, Ares): a third, centre leg (leg hits re-rolled 1-2 right / 3-4 centre / 5-6 left), -1 to piloting rolls, two-seat 4-ton cockpit and 10% heavier structure.
+- **BattleMech tracks** (Brahma, or any custom design): roll at walking speed as a tracked vehicle — no heavy woods or water, one level at a time at double cost — and ignore gyro and leg-actuator damage when keeping balance. 10% of tonnage, a slot in each leg.
+- **QuadVees** (Arion, Cyllaros, Boreas, Harpagos): Clan four-legged mechs that convert into tanks for 2 MP (+1 per damaged leg actuator, track or conversion gear). In vehicle mode they cruise/flank with no movement heat, can't fall and can drive through water, but can't jump, kick or side-step; each lost leg or track costs a quarter of their speed.
+
+The quad, tripod, QuadVee and tracked designs are adapted from [MegaMek Data](https://github.com/MegaMek/mm-data) by `tools/convert_mtf.py`, with later and Clan weapons mapped to the original game's 17 types. The Mech Lab can build every chassis.
+
 ## Mech Lab
 
-Design custom mechs (title screen → Mech Lab, or the ★ Custom tab in the Mech Bay): tonnage 20–100, engine speed, jump jets, heat sinks, armour and up to 16 of the 17 weapon types, with a live tonnage budget, critical-slot map and 3D model. Designs are stored on the device and travel with your lance; the host rebuilds and validates every custom mech (`src/core/custom.js`), so tampered designs are rejected.
+Design custom mechs (title screen → Mech Lab, or the ★ Custom tab in the Mech Bay): biped, four-legged or tripod chassis, optional tracks or QuadVee conversion, tonnage 20–100, engine speed, jump jets, heat sinks, armour and up to 16 of the 17 weapon types, with a live tonnage budget, critical-slot map and 3D model. Designs are stored on the device and travel with your lance; the host rebuilds and validates every custom mech (`src/core/custom.js`), so tampered designs are rejected.
 
 ## Rules in brief
 
@@ -85,3 +96,5 @@ npm run android:sync && (cd android && ./gradlew assembleRelease)
 ## Credits
 
 Original MechForce © 1987–89 Ralph H. Reed, distributed as shareware. This remake is a fan project and reads the game data from the original disk.
+
+Four-legged, tripod, QuadVee and tracked designs are adapted from MegaMek Data © The MegaMek Team, licensed [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/); `src/core/extradata.js` is shared under the same licence. BattleTech, BattleMech and 'Mech are trademarks of The Topps Company, Inc. This is an unofficial, non-commercial fan project.

@@ -1,15 +1,26 @@
 import { computeReach, canEndAt, pathFrom, reachKey, toHit, availableMechs, operational, canAct, activeSide, missionOf,
-  walkMP, runMP, jumpMP, dissipation, expectedDamage, totalArmor, maxArmor, secondsElapsed, attackDirection } from '../core/rules.js';
+  dissipation, expectedDamage, totalArmor, maxArmor, secondsElapsed, attackDirection,
+  moveModes, availMP, canConvert, conversionCost, pilotingMods, isQuadVee, onTracks, MOVE_HEAT } from '../core/rules.js';
 import { WEAPONS, MISSIONS, CLASS_NAMES, TERRAIN, critName } from '../core/data.js';
 import { neighbor, distance, facingToward, relBearing } from '../core/hex.js';
 import { $, $$, html, esc, promptBar, toast, banner, paperDoll, FocusNav, glyphHTML, floatText } from './ui.js';
 import { input } from './input.js';
 import { sfx, music } from './audio.js';
 import { ICON } from './icons.js';
-import { attr, weaponTip, heatTip, MODE_TIP, moveDefense, turnOrderTip, terrainTip, pilotTip, ARMOR_TIP, statusTip, hitDirTip, brackets, reasonText, modLine, hideTip, tipGC } from './tips.js';
+import { attr, weaponTip, heatTip, MODE_TIP, moveDefense, turnOrderTip, terrainTip, pilotTip, ARMOR_TIP, statusTip, hitDirTip, brackets, reasonText, modLine, hideTip, tipGC, SHIFT_TIP, CONVERT_TIP, CHASSIS_TIP, chassisName, chassisTag, locAbbr } from './tips.js';
 
-const MODE_COLOR = { walk: '#5fd3ff', run: '#ffb23e', jump: '#b98cff' };
-const MODE_LABEL = { walk: 'Walk', run: 'Run', jump: 'Jump' };
+const BASE_COLOR = { walk: '#5fd3ff', run: '#ffb23e', jump: '#b98cff', track: '#7ee0a8', cruise: '#7ee0a8', flank: '#ffd166' };
+const BASE_LABEL = { walk: 'Walk', run: 'Run', jump: 'Jump', track: 'Tracks', cruise: 'Cruise', flank: 'Flank' };
+// Move-mode keys: a base mode, optionally with '+cv' for a QuadVee converting at the end of the move
+const baseMode = (k) => k.split('+')[0];
+const isConv = (k) => k.endsWith('+cv');
+const MODE_COLOR = new Proxy({}, { get: (_, k) => BASE_COLOR[baseMode(String(k))] });
+const MODE_LABEL = new Proxy({}, { get: (_, k) => BASE_LABEL[baseMode(String(k))] + (isConv(String(k)) ? ' + convert' : '') });
+function modeKeys(st, m) {
+  const base = moveModes(m);
+  return canConvert(st, m) ? [...base, ...base.filter((k) => k !== 'jump').map((k) => k + '+cv')] : base;
+}
+const usable = (r, k) => r && (isConv(k) ? r.mp >= 0 : r.mp > 0);
 
 export class Battle {
   constructor(app) {
@@ -149,9 +160,11 @@ export class Battle {
     const st = this.state;
     const m = st.mechs[id];
     this.lastPicked = id;
-    const reach = { walk: computeReach(st, m, 'walk'), run: computeReach(st, m, 'run'), jump: jumpMP(m) > 0 ? computeReach(st, m, 'jump') : null };
-    const prevMode = this.ix.mechId === id ? this.ix.moveMode : 'walk';
-    this.ix = { mode: 'move', mechId: id, reach, moveMode: prevMode && reach[prevMode] ? prevMode : 'walk' };
+    const reach = {};
+    for (const k of modeKeys(st, m)) { const r = computeReach(st, m, baseMode(k), { convert: isConv(k) }); if (usable(r, k) || k === moveModes(m)[0]) reach[k] = r; }
+    const first = moveModes(m)[0];
+    const prevMode = this.ix.mechId === id ? this.ix.moveMode : first;
+    this.ix = { mode: 'move', mechId: id, reach, moveMode: prevMode && reach[prevMode] ? prevMode : first };
     this.cursor = { x: m.x, y: m.y };
     this.r.setActive(id);
     this.r.restoreZoom();
@@ -184,7 +197,7 @@ export class Battle {
     if (reach) for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       let ok = false;
       for (let f = 0; f < 6; f++) if (isFinite(reach.cost[(y * w + x) * 6 + f])) { ok = true; break; }
-      if (ok && canEndAt(st, m, x, y) && !(x === m.x && y === m.y)) cells.push({ x, y, color: MODE_COLOR[ix.moveMode] });
+      if (ok && canEndAt(st, m, x, y, reach) && !(x === m.x && y === m.y)) cells.push({ x, y, color: MODE_COLOR[ix.moveMode] });
     }
     this.r.setReach(cells);
     this.updateCursorOverlay();
@@ -193,7 +206,7 @@ export class Battle {
   hexReachable(x, y) {
     const ix = this.ix, st = this.state, m = st.mechs[ix.mechId];
     const reach = ix.reach[ix.moveMode];
-    if (!reach || !canEndAt(st, m, x, y)) return false;
+    if (!reach || !canEndAt(st, m, x, y, reach)) return false;
     for (let f = 0; f < 6; f++) if (isFinite(reach.cost[reachKey(reach, x, y, f)])) return true;
     return false;
   }
@@ -231,10 +244,13 @@ export class Battle {
     const ix = this.ix, m = this.state.mechs[ix.mechId];
     const reach = ix.reach[ix.moveMode];
     const isHome = x === m.x && y === m.y;
-    const r = isHome ? ix.reach.walk : reach;
+    // staying put: turn in place with the basic mode, or convert in place
+    const homeKey = isConv(ix.moveMode) ? ix.moveMode : moveModes(m)[0];
+    const r = isHome ? ix.reach[homeKey] : reach;
+    if (isHome && !canEndAt(this.state, m, x, y, r)) { toast('A QuadVee can\'t convert in water.'); return; }
     const { best, allowed } = this.bestFacingAt(r, x, y, m);
     if (!allowed.length) return;
-    this.ix = { ...ix, mode: 'facing', dest: { x, y }, allowed, facing: isHome ? m.f : best, moveMode: isHome ? 'walk' : ix.moveMode, homeMode: ix.moveMode };
+    this.ix = { ...ix, mode: 'facing', dest: { x, y }, allowed, facing: isHome ? m.f : best, moveMode: isHome ? homeKey : ix.moveMode, homeMode: ix.moveMode };
     sfx('ui-ok');
     this.updateCursorOverlay();
     this.render();
@@ -243,7 +259,7 @@ export class Battle {
   confirmMove() {
     const ix = this.ix;
     const m = this.state.mechs[ix.mechId];
-    const cmd = { type: 'move', id: m.id, x: ix.dest.x, y: ix.dest.y, f: ix.facing, mode: ix.moveMode };
+    const cmd = { type: 'move', id: m.id, x: ix.dest.x, y: ix.dest.y, f: ix.facing, mode: baseMode(ix.moveMode), ...(isConv(ix.moveMode) ? { convert: true } : {}) };
     this.send(cmd);
     this.ix = { mode: 'sent' };
     this.r.clearOverlays();
@@ -422,7 +438,7 @@ export class Battle {
 
   cycleMoveMode() {
     const ix = this.ix;
-    const modes = ['walk', 'run', 'jump'].filter((k) => ix.reach[k] && ix.reach[k].mp > 0);
+    const modes = Object.keys(ix.reach).filter((k) => usable(ix.reach[k], k));
     if (!modes.length) return;
     const i = modes.indexOf(ix.moveMode);
     ix.moveMode = modes[(i + 1) % modes.length];
@@ -618,7 +634,11 @@ export class Battle {
     const mech = ix.mechId !== undefined ? st.mechs[ix.mechId] : null;
     let hint = '';
     if (!mine) hint = st.over ? 'The battle is over.' : `${esc(st.sides[side]?.name || '')} is taking its turn. Hover or select any mech to inspect it.`;
-    else if (ix.mode === 'move') hint = `Pick a lit hex for <b>${esc(mech.design)}</b>: <span class="c-walk">walk</span>, <span class="c-run">run</span> or <span class="c-jump">jump</span> (switch with ${glyphHTML('y')}). Moving makes you harder to hit but costs heat and accuracy. ${av.length > 1 ? `${glyphHTML('rb')} picks a different mech.` : ''}`;
+    else if (ix.mode === 'move') {
+      const names = Object.keys(ix.reach).filter((k) => usable(ix.reach[k], k)).map((k) => `<span style="color:${MODE_COLOR[k]}">${MODE_LABEL[k].toLowerCase()}</span>`);
+      const extra = mech.body === 'quad' && !onTracks(mech) && !baseMode(ix.moveMode).match(/jump/) ? ' Four legs can side-step without turning.' : isConv(ix.moveMode) ? ` Converts at the end of the move (${conversionCost(mech)} MP).` : '';
+      hint = `Pick a lit hex for <b>${esc(mech.design)}</b>: ${names.length > 1 ? names.slice(0, -1).join(', ') + ' or ' + names[names.length - 1] : names[0] || 'stay'} (switch with ${glyphHTML('y')}).${extra} Moving makes you harder to hit but costs heat and accuracy. ${av.length > 1 ? `${glyphHTML('rb')} picks a different mech.` : ''}`;
+    }
     else if (ix.mode === 'facing') hint = 'Choose which way to face. Most weapons fire forwards only, and your back armour is thin.';
     else if (ix.mode === 'attack') hint = ix.noShots ? 'No enemy is in range and in sight. End this mech\'s turn.' : 'Tick weapons and check the hit chances, then fire. Watch your heat. Hover a weapon to see why the chance is what it is.';
     else hint = 'Resolving…';
@@ -635,7 +655,7 @@ export class Battle {
     const P = (a, label) => ({ a, label });
     switch (ix.mode) {
       case 'move': {
-        const modes = ['walk', 'run', 'jump'].filter((k) => ix.reach[k] && ix.reach[k].mp > 0);
+        const modes = Object.keys(ix.reach).filter((k) => usable(ix.reach[k], k));
         const av = availableMechs(st, activeSide(st));
         return [P('confirm', 'Move here'), modes.length > 1 ? P('y', `${MODE_LABEL[ix.moveMode]} ▸ ${MODE_LABEL[modes[(modes.indexOf(ix.moveMode) + 1) % modes.length]]}`) : null, P('x', 'Stay here'),
           av.length > 1 && (!st.act || st.act.phase === 'move') ? P('rb', 'Other mech') : null, P('view', 'Skip mech'), P('menu', 'Menu')].filter(Boolean);
@@ -675,7 +695,7 @@ export class Battle {
       const reach = ix.reach[ix.moveMode];
       let c = Infinity;
       for (let f = 0; f < 6; f++) c = Math.min(c, reach.cost[reachKey(reach, x, y, f)]);
-      costTxt = isFinite(c) ? `<b class="c-${ix.moveMode}">${MODE_LABEL[ix.moveMode]}</b> here uses ${c} of ${reach.mp} movement points` : `Out of ${MODE_LABEL[ix.moveMode].toLowerCase()} range`;
+      costTxt = isFinite(c) ? `<b style="color:${MODE_COLOR[ix.moveMode]}">${MODE_LABEL[ix.moveMode]}</b> here uses ${c} of ${reach.mp} movement points${isConv(ix.moveMode) ? ' (after converting)' : ''}` : `Out of ${MODE_LABEL[ix.moveMode].toLowerCase()} range`;
     }
     return html(`<div class="unit-card target tcard panel" style="--side:var(--amber)" ${attr(t.name, terrainTip(tn))}>
       <div class="uc-head"><div><div class="eyebrow">${ICON.tree} Terrain</div><b>${esc(t.name)}</b></div><span class="chip-sm">Level ${e}</span></div>
@@ -699,30 +719,37 @@ export class Battle {
     if (m.sensorHits) tags.push(['warn', `Sensors ×${m.sensorHits}`]);
     if (m.hsLost) tags.push(['warn', `-${m.hsLost} heat sinks`]);
     if (m.activated && !other) tags.push(['ok', 'Done this round']);
+    if (isQuadVee(m) && m.vmode === 'vehicle') tags.push(['ok', 'Vehicle mode']);
+    else if (onTracks(m)) tags.push(['ok', 'On tracks']);
     const arm = totalArmor(m) / maxArmor(m);
     const sinks = dissipation(st, m);
     // projected heat when this is the mech being commanded
     let proj;
     const mine = !other && ix.mechId === m.id;
-    if (mine && ix.mode === 'move') proj = Math.max(0, m.heat + ({ walk: 1, run: 2, jump: 3 }[ix.moveMode] || 0) + m.engineHits * 5 - sinks);
+    if (mine && ix.mode === 'move') { const b = baseMode(ix.moveMode); proj = Math.max(0, m.heat + (b === 'jump' ? 3 : isConv(ix.moveMode) && (b === 'cruise' || b === 'flank') ? (b === 'flank' ? 2 : 1) : MOVE_HEAT[b] || 0) + m.engineHits * 5 - sinks); }
     if (mine && ix.mode === 'attack') proj = this.projectedHeat(m);
-    const moveModes = [['walk', walkMP(m)], ['run', runMP(m)], ['jump', jumpMP(m)]];
+    const mmodes = moveModes(m).map((k) => [k, availMP(m, k)]);
     const selectable = mine && ix.mode === 'move';
+    const conv = isQuadVee(m) && selectable && canConvert(st, m);
     const card = html(`<div class="unit-card panel ${other ? 'target' : ''}" style="--side:${s.color}">
-      <div class="uc-head"><div><div class="eyebrow">${CLASS_NAMES[m.cls]} · ${m.tons}t · ${esc(s.name)}</div><b>${esc(m.design)}</b></div>
+      <div class="uc-head"><div><div class="eyebrow">${CLASS_NAMES[m.cls]} · ${m.tons}t · ${esc(s.name)}</div><b>${esc(m.design)}</b>${m.body !== 'biped' || m.mot ? ` <span class="ctag" ${attr(chassisName(m), CHASSIS_TIP[m.mot || m.body])}>${esc(chassisTag(m))}</span>` : ''}</div>
         <span class="chip-sm" ${attr('Armour remaining', 'Total armour and internal structure left, compared with a fresh mech.')}>${ICON.shield} ${Math.round(arm * 100)}%</span></div>
       <div class="uc-body">
         <div class="doll" ${attr('Armour diagram', ARMOR_TIP)}>${paperDoll(m)}</div>
         <div class="uc-stats">
           ${this.heatBar(m, proj)}
           <div class="lbl">Movement</div>
-          <div class="modes">${moveModes.map(([k, mp]) => `<button class="mode ${k} ${selectable && ix.moveMode === k ? 'on' : ''} ${mp ? '' : 'none'}" data-mode="${k}" ${attr(MODE_LABEL[k] + ` · ${mp} MP`, `<p>${MODE_TIP[k]}</p><p>${moveDefense}</p>`)}>${ICON[k]}<span>${MODE_LABEL[k]}</span><b>${mp || '—'}</b></button>`).join('')}</div>
-          <div class="pilot" ${attr('MechWarrior ' + m.pilot.name, pilotTip(m))}>${ICON.pilot}<span>${esc(m.pilot.name)}</span><span class="pips">${[0, 1, 2, 3, 4, 5].map((i) => `<i class="${i < m.pilot.hits ? 'on' : ''}"></i>`).join('')}</span></div>
+          <div class="modes ${mmodes.length + (isQuadVee(m) ? 1 : 0) > 3 ? 'four' : ''}">${mmodes.map(([k, mp]) => `<button class="mode ${k} ${selectable && baseMode(ix.moveMode) === k ? 'on' : ''} ${mp ? '' : 'none'}" data-mode="${k}" ${attr(BASE_LABEL[k] + ` · ${mp} MP`, `<p>${MODE_TIP[k]}</p>${m.body === 'quad' && (k === 'walk' || k === 'run') ? `<p>${SHIFT_TIP}</p>` : ''}<p>${moveDefense}</p>`)}>${ICON[k]}<span>${BASE_LABEL[k]}</span><b>${mp || '—'}</b></button>`).join('')}${isQuadVee(m) ? `<button class="mode convert ${selectable && isConv(ix.moveMode) ? 'on' : ''} ${conv ? '' : 'none'}" data-conv="1" ${attr(m.vmode === 'vehicle' ? 'Convert to BattleMech' : 'Convert to vehicle', CONVERT_TIP(conversionCost(m), m.vmode !== 'vehicle'))}>${ICON.convert}<span>Convert</span><b>${conversionCost(m)}</b></button>` : ''}</div>
+          <div class="pilot" ${attr('MechWarrior ' + m.pilot.name, pilotTip(m, pilotingMods(m)))}>${ICON.pilot}<span>${esc(m.pilot.name)}</span><span class="pips">${[0, 1, 2, 3, 4, 5].map((i) => `<i class="${i < m.pilot.hits ? 'on' : ''}"></i>`).join('')}</span></div>
         </div>
       </div>
       ${tags.length ? `<div class="status-tags">${tags.map(([c, t]) => `<span class="tag ${c}" ${attr(t, statusTip(t))}>${esc(t)}</span>`).join('')}</div>` : ''}
     </div>`);
-    if (selectable) $$('.mode', card).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); this.setMoveMode(b.dataset.mode); }));
+    if (selectable) $$('.mode', card).forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (b.dataset.conv) { const k = baseMode(ix.moveMode); this.setMoveMode(isConv(ix.moveMode) ? k : k === 'jump' ? moveModes(m)[0] + '+cv' : k + '+cv'); }
+      else this.setMoveMode(isConv(ix.moveMode) && b.dataset.mode !== 'jump' ? b.dataset.mode + '+cv' : b.dataset.mode);
+    }));
     return card;
   }
 
@@ -746,7 +773,7 @@ export class Battle {
 
   setMoveMode(mode) {
     const ix = this.ix;
-    if (ix.mode !== 'move' || !ix.reach[mode] || ix.reach[mode].mp <= 0) { toast(`${MODE_LABEL[mode]} isn't possible for this mech right now.`); return; }
+    if (ix.mode !== 'move' || !ix.reach[mode] || !usable(ix.reach[mode], mode)) { toast(`${MODE_LABEL[mode]} isn't possible for this mech right now.`); return; }
     ix.moveMode = mode;
     sfx('ui-move');
     this.updateMoveOverlay();
@@ -773,7 +800,7 @@ export class Battle {
         <div class="doll mini" ${attr('Target armour', ARMOR_TIP)}>${paperDoll(t)}</div>
         <div class="tgt-facts">
           <div class="bar"><span class="track"><span class="fill" style="width:${totalArmor(t) / maxArmor(t) * 100}%"></span></span><span class="num">${Math.round(totalArmor(t) / maxArmor(t) * 100)}%</span></div>
-          <div class="dim">${t.tons}t ${CLASS_NAMES[t.cls].toLowerCase()} · moved ${t.lastMove.hexes} hex${t.lastMove.hexes === 1 ? '' : 'es'}${t.lastMove.mode === 'jump' ? ' (jumped)' : ''}${t.prone ? ' · prone' : ''}${t.shutdown ? ' · shut down' : ''}</div>
+          <div class="dim">${t.tons}t ${CLASS_NAMES[t.cls].toLowerCase()} · moved ${t.lastMove.hexes} hex${t.lastMove.hexes === 1 ? '' : 'es'}${t.lastMove.mode === 'jump' ? ' (jumped)' : ''}${t.prone ? ' · prone' : ''}${t.shutdown ? ' · shut down' : ''}${isQuadVee(t) && t.vmode === 'vehicle' ? ' · vehicle mode' : ''}</div>
         </div>
       </div>
       <div class="whead"><span></span><span>Weapon</span><span ${attr('Range bands', '<p>Each bar shows a weapon\'s reach: <span class="c-walk">short</span>, <span class="c-run">medium</span> and <span class="c-far">long</span> range. Hatching is the minimum range where the weapon struggles.</p><p>The white line is where the target is. If it falls past the end of a bar, that weapon can\'t reach.</p>')}>Range ${ICON.info}</span><span>Dmg</span><span>Heat</span><span ${attr('Hit chance', '<p>The chance this weapon hits, from rolling two dice against the target number. Hover or focus a weapon to see every modifier.</p>')}>Hit ${ICON.info}</span></div>
@@ -795,7 +822,7 @@ export class Battle {
       const rbar = `<span class="rbar">${seg(0, b.s, 's')}${seg(b.s, b.m, 'm')}${seg(b.m, b.l, 'l')}${b.min ? seg(0, b.min, 'min') : ''}<span class="mark" style="left:${Math.min(dist, scale) / scale * 100}%"></span></span>`;
       const row = html(`<div class="wrow nav ${th.ok ? (on ? 'on' : '') : 'off'}" data-key="w${w.i}" ${attr(W.name, weaponTip(w, th, dist))}>
         <span class="chk">${on ? ICON.check : ''}</span>
-        <span class="wn"><b>${esc(W.short)}</b><small>${['Head', 'L.torso', 'C.torso', 'R.torso', 'L.arm', 'R.arm', 'L.leg', 'R.leg'][w.loc]}${w.ammo >= 0 ? ` · ${w.ammo} shots` : ''}</small></span>
+        <span class="wn"><b>${esc(W.short)}</b><small>${locAbbr(m.body, w.loc)}${w.ammo >= 0 ? ` · ${w.ammo} shots` : ''}</small></span>
         ${rbar}<span class="num">${w.dmg}${W.n > 1 ? `<small>×${W.n}</small>` : ''}</span><span class="num faint">${w.heat}</span>
         <span class="pm ${pc}">${th.ok ? `<s style="width:${pct}%"></s><em>${pct}%</em>` : `<em class="no">${esc(shortReason(th.reason))}</em>`}</span></div>`);
       row.addEventListener('click', () => {

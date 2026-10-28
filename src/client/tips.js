@@ -127,12 +127,14 @@ export function modLine(m) {
 
 const REASON_EXPLAIN = {
   'Out of range': 'The target is further away than this weapon can reach.',
-  'Out of arc': 'This weapon can\'t point that way. Torso and head weapons fire into your front 120°; arm weapons also cover their own side. Turn to face the target next time.',
+  'Out of arc': 'This weapon can\'t point that way. Torso, head and leg weapons fire into your front 120°; arm weapons also cover their own side. Turn to face the target next time.',
   'No line of sight': 'Hills or thick woods block the view. Move to higher ground or around the obstacle.',
   'No ammo': 'This weapon has fired all its ammunition.',
   'Destroyed': 'This weapon was knocked out by a critical hit.',
   'Not adjacent': 'You need to be in the hex next to the target.',
   'Elevation': 'The height difference is too big to reach.',
+  'Four-legged': 'A four-legged mech has no arms, so it can\'t punch. It can still kick.',
+  'Vehicle mode': 'A QuadVee in vehicle mode can\'t make physical attacks. Convert back to BattleMech mode first.',
 };
 export const reasonText = (r) => REASON_EXPLAIN[r] || r;
 
@@ -162,7 +164,30 @@ export const MODE_TIP = {
   walk: 'Walk: the safest way to move. +1 heat. Your shots this turn get +1 to hit (slightly harder). You can also step backwards.',
   run: 'Run: about 50% further than walking. +2 heat and +2 to your own shots this turn. Can\'t enter deep water.',
   jump: 'Jump: fly over anything to any hex in range and land facing any way. At least +3 heat and +3 to your shots, but the target number to hit YOU rises too.',
+  track: 'Tracks: kneel down and roll at walking speed. +1 heat and +1 to your shots, like walking. On tracks the mech ignores leg and gyro damage when keeping its balance, but it can\'t enter heavy woods or water, can climb only one level at a time, and climbing costs double. Can reverse.',
+  cruise: 'Cruise (vehicle mode): drive at walking speed. No movement heat at all, +1 to your shots. Can\'t enter heavy woods, climbs one level at a time at double cost, but can drive through water. Can reverse.',
+  flank: 'Flank (vehicle mode): drive flat out, about 50% further. Still no movement heat, +2 to your shots. Forward only.',
 };
+export const SHIFT_TIP = 'Four-legged mechs can side-step: move to a hex at the front-left or front-right without turning, for 1 extra movement point. Walking, they can also side-step backwards.';
+export const CONVERT_TIP = (cost, toVehicle) => `<p>Fold into a ${toVehicle ? 'tracked tank' : 'four-legged BattleMech'} at the end of this move. Converting uses <b>${cost}</b> movement points (2, plus 1 for each damaged leg actuator, track or conversion gear), so you move that much less this turn.</p><p>${toVehicle ? 'Vehicle mode: no movement heat, can\'t fall over, can drive through water. No jumping, kicking or side-stepping.' : 'BattleMech mode: can jump, kick and side-step, and gets the four-legged -2 bonus to stay upright.'}</p><p>You can't convert in water or while lying down.</p>`;
+
+// ---- chassis descriptions (Mech Bay, Mech Lab, unit cards)
+export const CHASSIS_TIP = {
+  biped: '<p>A standard two-legged BattleMech with two arms.</p>',
+  quad: '<p><b>Four-legged.</b> No arms, so no punches, and its front legs carry what would be arm armour. Four legs make it very steady: -2 to every piloting roll while all four work. It can side-step without turning (+1 MP), and keeps going after losing a leg (-1 MP; with two gone it crawls at 1 MP).</p><p>Its weapons all fire forwards.</p>',
+  tripod: '<p><b>Tripod.</b> Two arms and three legs, with a two-seat cockpit. -1 to piloting rolls while all three legs work. Shots that hit "a leg" can strike the centre leg too. Losing a leg drops it to 1 MP; losing two leaves it immobile.</p>',
+  tracks: '<p><b>BattleMech tracks.</b> This mech can kneel and roll on tracks at walking speed instead of walking. On tracks it ignores leg actuator and gyro damage when keeping its balance, and keeps rolling even with a wrecked gyro, but it can\'t run, can\'t enter heavy woods or water, and climbing costs double.</p>',
+  quadvee: '<p><b>QuadVee.</b> A Clan four-legged mech that converts into a tracked tank (2 MP). As a tank it cruises at walking speed or flanks at running speed with <b>no movement heat</b>, can\'t fall over and can drive through water — but it can\'t jump, kick or side-step. Each lost leg or track costs a quarter of its tank speed.</p>',
+};
+export function chassisName(m) {
+  const b = (m && m.body) || 'biped';
+  if (m.mot === 'quadvee') return 'QuadVee';
+  return ({ biped: 'Biped', quad: 'Four-legged', tripod: 'Tripod' }[b]) + (m.mot === 'tracks' ? ' + tracks' : '');
+}
+export function chassisTag(m) { return m.mot === 'quadvee' ? 'QuadVee' : m.body === 'quad' ? 'Quad' : m.body === 'tripod' ? 'Tripod' : m.mot === 'tracks' ? 'Tracks' : ''; }
+const LOC_ABBR = ['Head', 'L.torso', 'C.torso', 'R.torso', 'L.arm', 'R.arm', 'L.leg', 'R.leg', 'C.leg'];
+const QUAD_ABBR = ['Head', 'L.torso', 'C.torso', 'R.torso', 'FL leg', 'FR leg', 'RL leg', 'RR leg'];
+export const locAbbr = (body, l) => (body === 'quad' ? QUAD_ABBR : LOC_ABBR)[l];
 export const moveDefense = 'Moving also makes you harder to hit: enemies get +1 to hit you for 3–4 hexes moved, +2 for 5–6, +3 for 7–9, +4 for 10+, and +1 more if you jumped.';
 
 export function turnOrderTip(st) {
@@ -185,11 +210,12 @@ export function terrainTip(tn) {
   return `<p>${lines[tn] || T.name}</p><p>Climbing or dropping a level costs 1 extra per level; you can't step up or down more than 2 levels. Higher ground blocks sight for mechs below it.</p>`;
 }
 
-export function pilotTip(m) {
-  return `<p>${esc(m.pilot.name)} has taken <b>${m.pilot.hits} of 6</b> injuries. Injuries come from head hits, falls, ammo explosions and overheating with damaged life support.</p><p>Each injury risks knocking the pilot unconscious (the mech stops until they wake). Six injuries kill the pilot.</p><p>Gunnery ${m.pilot.gun} (lower is better at shooting) · Piloting ${m.pilot.pil} (lower is better at staying upright and melee).</p>`;
+export function pilotTip(m, mods) {
+  const extra = mods && mods.length ? `<p>Staying upright: piloting ${m.pilot.pil} ${mods.map(([l, v]) => `${v > 0 ? '+' : '−'}${Math.abs(v)} ${esc(l.toLowerCase())}`).join(', ')}.</p>` : '';
+  return extra + `<p>${esc(m.pilot.name)} has taken <b>${m.pilot.hits} of 6</b> injuries. Injuries come from head hits, falls, ammo explosions and overheating with damaged life support.</p><p>Each injury risks knocking the pilot unconscious (the mech stops until they wake). Six injuries kill the pilot.</p><p>Gunnery ${m.pilot.gun} (lower is better at shooting) · Piloting ${m.pilot.pil} (lower is better at staying upright and melee).</p>`;
 }
 
-export const ARMOR_TIP = '<p>Each block is one part of the mech; the number is its armour. Green is healthy, red is nearly stripped, dark red means armour is gone and the internal structure is exposed — hits there can cause critical damage.</p><p>The small row marked REAR is the back armour of the torso: much thinner, so shots from behind hurt more. Losing the head or center torso destroys the mech.</p>';
+export const ARMOR_TIP = '<p>Each block is one part of the mech; the number is its armour. Green is healthy, red is nearly stripped, dark red means armour is gone and the internal structure is exposed — hits there can cause critical damage.</p><p>The small row marked REAR is the back armour of the torso: much thinner, so shots from behind hurt more. Losing the head or center torso destroys the mech.</p><p>Four-legged mechs show four legs where the arms would be; a tripod has a third leg in the middle.</p>';
 
 export const STATUS_TIP = {
   'Prone': 'Knocked down. Standing up costs 2 movement points. Easier to hit up close, harder from range.',
@@ -199,6 +225,8 @@ export const STATUS_TIP = {
   'Destroyed': 'Out of the fight.',
   'Left battlefield': 'This mech has exited the map for the mission objective.',
   'Scouted': 'This mech has reached the enemy rear. Get it home off the west edge.',
+  'Vehicle mode': 'This QuadVee is folded into a tank: cruise/flank with no movement heat, can\'t fall, can drive through water. No jumping, kicking or side-stepping.',
+  'On tracks': 'Rolling on its tracks: it ignores leg and gyro damage when keeping its balance, but can\'t enter heavy woods or water.',
 };
 export function statusTip(label) {
   if (label.startsWith('Engine')) return 'Engine damage adds 5 heat every turn per hit. A third hit destroys the mech.';
@@ -261,6 +289,12 @@ export const MANUAL = [
     <p>The game runs on the host's device, so the host must keep MechForce open (on a phone, keep the screen on). Players who drop out reconnect into the same seat.</p>
     <p>If someone can't connect, one of the networks is probably blocking direct connections. Add a TURN relay under <b>Settings → Online play</b>, or use a LAN or dedicated server instead.</p>
     <p><b>Host LAN Server</b> (Windows and Steam Deck apps) runs a server on your home network that other apps find automatically.</p>` },
+  { k: 'chassis', t: 'Legs & tracks', body: `
+    <p>Most mechs walk on two legs, but BattleTech also has other chassis, and MechForce plays them by the board game's rules.</p>
+    <p><b>Four-legged mechs</b> (Goliath, Scorpion, Barghest…) have no arms: no punching, and all their weapons fire forwards. Four legs make them steady (-2 to piloting rolls while all legs work), and they can <b>side-step</b> — move to the front-left or front-right hex without turning, for 1 extra MP (walking, also backwards). Losing one leg costs only 1 MP; with two gone they crawl at 1 MP. Hits that would strike an arm land on a front leg.</p>
+    <p><b>Tripods</b> (Triskelion, Poseidon, Ares) have arms and three legs: -1 to piloting rolls, and leg hits can land on the centre leg. One lost leg drops them to 1 MP.</p>
+    <p><b>Tracks</b> (Brahma, or any design in the Mech Lab): pick <b>Tracks</b> as the movement mode to kneel and roll at walking speed. On tracks the mech ignores leg and gyro damage when keeping its balance, but can't enter heavy woods or water, climbs one level at a time and pays double to climb.</p>
+    <p><b>QuadVees</b> (Arion, Cyllaros, Boreas, Harpagos) are Clan four-legged mechs that fold into tanks. Press <b>Convert</b> while moving: it costs 2 MP and happens at the end of the move. In vehicle mode they <b>cruise</b> or <b>flank</b> with no movement heat, can't fall over and can drive through water, but can't jump, kick or side-step. Each lost leg or track takes a quarter of their tank speed.</p>` },
   { k: 'controls', t: 'Controls', body: `
     <table class="tt"><tr><td>Move cursor</td><td>Left stick / d-pad · WASD / arrows · mouse · tap</td></tr>
     <tr><td>Confirm</td><td>A / ✕ · Enter · click · tap again</td></tr>

@@ -1,6 +1,6 @@
 import { glyph, glyphClass, input } from './input.js';
 import { sfx } from './audio.js';
-import { LOC_NAMES } from '../core/data.js';
+import { locName } from '../core/data.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -106,7 +106,19 @@ const ZONES = [
   [7, 11, 20, 13, 38], [8, 76, 20, 13, 38], [9, 29, 60, 15, 44], [10, 56, 60, 15, 44],
   [4, 27, 109, 14, 10], [5, 43, 109, 14, 10], [6, 59, 109, 14, 10],
 ];
-const ZONE_LOC = [0, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7];
+// four-legged: legs at the corners, seen from above
+const ZONES_QUAD = [
+  [0, 42, 3, 16, 13], [1, 26, 18, 15, 40], [2, 42, 18, 16, 46], [3, 59, 18, 15, 40],
+  [7, 8, 8, 15, 40], [8, 77, 8, 15, 40], [9, 8, 60, 15, 42], [10, 77, 60, 15, 42],
+  [4, 27, 109, 14, 10], [5, 43, 109, 14, 10], [6, 59, 109, 14, 10],
+];
+// tripod: a third leg in the middle
+const ZONES_TRI = [
+  [0, 42, 3, 16, 13], [1, 26, 18, 15, 34], [2, 42, 18, 16, 40], [3, 59, 18, 15, 34],
+  [7, 11, 20, 13, 38], [8, 76, 20, 13, 38], [9, 24, 62, 15, 42], [11, 42.5, 62, 15, 42], [10, 61, 62, 15, 42],
+  [4, 27, 109, 14, 10], [5, 43, 109, 14, 10], [6, 59, 109, 14, 10],
+];
+const ZONE_LOC = [0, 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8];
 export function armorColor(frac, internalFrac, gone) {
   if (gone) return '#1b1f24';
   if (frac > 0) return `hsl(${Math.round(20 + frac * 110)}, 70%, ${42 + frac * 8}%)`;
@@ -114,7 +126,8 @@ export function armorColor(frac, internalFrac, gone) {
 }
 export function paperDoll(m, { max = false, hl = null } = {}) {
   let s = '<svg viewBox="0 0 100 122" aria-label="Armor diagram">';
-  for (const [z, x, y, w, h] of ZONES) {
+  const body = m.body || 'biped';
+  for (const [z, x, y, w, h] of body === 'quad' ? ZONES_QUAD : body === 'tripod' ? ZONES_TRI : ZONES) {
     const loc = ZONE_LOC[z];
     const gone = !max && m.locGone && m.locGone[loc];
     const a = max ? m.a[z] : m.armor[z];
@@ -123,7 +136,7 @@ export function paperDoll(m, { max = false, hl = null } = {}) {
     const imax = max ? m.i[loc] : m.internalMax[loc];
     const fill = armorColor(amax ? a / amax : 0, imax ? i / imax : 0, gone);
     const stroke = hl === loc ? 'stroke="#ffd27a" stroke-width="2"' : '';
-    s += `<rect class="z" x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" ${stroke}><title>${LOC_NAMES[loc]}${z >= 4 && z <= 6 ? ' (rear)' : ''}: ${a} armor, ${i} structure</title></rect>`;
+    s += `<rect class="z" x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" ${stroke}><title>${locName(body, loc)}${z >= 4 && z <= 6 ? ' (rear)' : ''}: ${a} armor, ${i} structure</title></rect>`;
     s += gone ? `<text x="${x + w / 2}" y="${y + h / 2 + 3}" style="fill:#ff5a3c">✕</text>` : `<text x="${x + w / 2}" y="${y + h / 2 + 3}">${a}</text>`;
   }
   s += '<text x="50" y="106.5" style="fill:#66727e;font-size:6px;letter-spacing:1px">REAR</text></svg>';

@@ -9,7 +9,7 @@ import { Battle } from './battle.js';
 import { input, pollInput, glyph } from './input.js';
 import { initAudio, sfx, music, audioSettings, applyVolumes } from './audio.js';
 import { $, $$, html, esc, FocusNav, promptBar, toast, paperDoll, glyphHTML } from './ui.js';
-import { initTips, tipSettings, hideTip, MANUAL, attr as tipAttr, weaponBlurb, ARMOR_TIP } from './tips.js';
+import { initTips, tipSettings, hideTip, MANUAL, attr as tipAttr, weaponBlurb, ARMOR_TIP, CHASSIS_TIP, chassisName, chassisTag, locAbbr } from './tips.js';
 import { MechPreview } from './preview.js';
 import { showLab, loadDesigns } from './lab.js';
 import { buildTemplate, specFromStock, entryName } from '../core/custom.js';
@@ -542,12 +542,16 @@ class App {
     const info = (m) => {
       if (!m) return '<div class="faint">Select a mech</div>';
       const arm = m.a.reduce((x, y) => x + y, 0);
-      const LOCN = ['Head', 'L.torso', 'C.torso', 'R.torso', 'L.arm', 'R.arm', 'L.leg', 'R.leg'];
-      const rows = m.wp.map((w, i) => `<tr class="wr" data-wi="${i}" ${tipAttr(WEAPONS[w[0]].name, `<p>${esc(weaponBlurb(w[0]))}</p><p>Hover or tap to see it fire on the model.</p>`)}><td><span class="wdot"></span>${esc(WEAPONS[w[0]].name)}</td><td class="num">${w[2]}${WEAPONS[w[0]].n > 1 ? '×' + WEAPONS[w[0]].n : ''}</td><td class="num">${w[1]}</td><td class="num">${w[4] ? w[4] + '–' : ''}${w[3]}</td><td>${LOCN[w[7]]}</td><td class="num">${WEAPONS[w[0]].kind === 'e' ? '—' : w[6]}</td></tr>`).join('');
+      const body = m.body || 'biped';
+      const LOCN = (l) => locAbbr(body, l);
+      const moveTxt = `${m.w}/${Math.ceil(m.w * 1.5)}`;
+      const chassisTip = CHASSIS_TIP[m.mot || body];
+      const rows = m.wp.map((w, i) => `<tr class="wr" data-wi="${i}" ${tipAttr(WEAPONS[w[0]].name, `<p>${esc(weaponBlurb(w[0]))}</p><p>Hover or tap to see it fire on the model.</p>`)}><td><span class="wdot"></span>${esc(WEAPONS[w[0]].name)}</td><td class="num">${w[2]}${WEAPONS[w[0]].n > 1 ? '×' + WEAPONS[w[0]].n : ''}</td><td class="num">${w[1]}</td><td class="num">${w[4] ? w[4] + '–' : ''}${w[3]}</td><td>${LOCN(w[7])}</td><td class="num">${WEAPONS[w[0]].kind === 'e' ? '—' : w[6]}</td></tr>`).join('');
       return `<div class="bay-stats">
           <div class="doll" ${tipAttr('Armour layout', ARMOR_TIP)}>${paperDoll(m, { max: true })}</div>
           <div class="stat-grid">
-            <div class="stat" ${tipAttr('Movement', 'Hexes per turn walking / running (movement points; terrain costs more).')}><div class="k">Walk/Run</div><div class="v">${m.w}/${Math.ceil(m.w * 1.5)}</div></div>
+            <div class="stat" ${tipAttr(chassisName(m), chassisTip)}><div class="k">Chassis</div><div class="v sm">${esc(chassisName(m))}</div></div>
+            <div class="stat" ${tipAttr('Movement', m.mot === 'quadvee' ? 'Walk / run as a BattleMech. As a tank it cruises at the same speed and flanks at the running speed.' : m.mot === 'tracks' ? 'Walk / run on legs. On tracks it rolls at walking speed (no running).' : 'Hexes per turn walking / running (movement points; terrain costs more).')}><div class="k">Walk/Run</div><div class="v">${moveTxt}</div></div>
             <div class="stat" ${tipAttr('Jump jets', 'How far it can jump, ignoring terrain. A dash means no jump jets.')}><div class="k">Jump</div><div class="v">${m.j || '—'}</div></div>
             <div class="stat" ${tipAttr('Armour', 'Total armour points across all 11 zones.')}><div class="k">Armor</div><div class="v">${arm}</div></div>
             <div class="stat" ${tipAttr('Heat sinks', 'Heat removed at the end of each activation. More sinks means you can fire more weapons without overheating.')}><div class="k">Heat sinks</div><div class="v">${m.hs}</div></div>
@@ -563,6 +567,8 @@ class App {
       const vc = $('.vcustom', det); vc.classList.remove('hidden'); vc.innerHTML = `${ICON.mech} ${m.custom ? 'Edit in Mech Lab' : 'Customise in Mech Lab'}`;
       vc.onclick = (e) => { e.stopPropagation(); this.openBayLab(m, edit, opts); };
       $('.vjump', det).classList.toggle('hidden', !m.j);
+      $('.vdrive', det).classList.toggle('hidden', !m.mot);
+      $('.vdrive span', det).textContent = m.mot === 'quadvee' ? 'Convert' : 'Tracks';
       $('.info', det).innerHTML = info(m);
       const pv = this.preview;
       pv.show(m, color);
@@ -585,14 +591,14 @@ class App {
       const mechs = list();
       const tons = edit ? lanceTons(edit.lance) : 0;
       const el = html(`<div class="screen">
-        <div class="screen-head"><div><div class="eyebrow">${edit ? 'Choose your lance' : 'Mech Bay'}</div><h2>${edit ? `${esc(this.lobby.slots[edit.side].name)}` : 'Original MechForce designs'}</h2></div><div class="spacer"></div>
+        <div class="screen-head"><div><div class="eyebrow">${edit ? 'Choose your lance' : 'Mech Bay'}</div><h2>${edit ? `${esc(this.lobby.slots[edit.side].name)}` : 'BattleMech designs'}</h2></div><div class="spacer"></div>
           <div class="tabs">${CLASS_NAMES.map((c, i) => `<div class="tab ${i === st.cls ? 'on' : ''}" data-c="${i}">${c} ${MECHS.filter((m) => m.c === i).length}</div>`).join('')}${opts.pickStock ? '' : `<div class="tab ${st.cls === 4 ? 'on' : ''}" data-c="4">★ Custom ${loadDesigns().length}</div>`}</div></div>
         ${opts.pickStock ? '<div class="lance-tray"><span class="eyebrow">Pick a stock design to start from</span></div>' : ''}
         ${edit ? `<div class="lance-tray"><span class="eyebrow">Lance</span>${edit.lance.map((n) => `<span class="chip">${typeof n === 'object' ? '★ ' : ''}${esc(entryName(n))}</span>`).join('') || '<span class="faint">Empty — add up to ' + edit.max + '</span>'}
           <span class="num ${tons > edit.limit ? '' : 'dim'}" style="margin-left:auto;${tons > edit.limit ? 'color:var(--red)' : ''}">${tons} / ${edit.limit}t</span></div>` : ''}
         <div class="screen-body bay"><div class="panel scroll list"></div><div class="panel detail scroll">
           <div class="viewer"><div class="vname"></div>
-            <div class="vbtns"><button class="vb" data-v="walk">${ICON.walk} Walk</button><button class="vb vjump" data-v="jump">${ICON.jump} Jump</button><button class="vb" data-v="fire">${ICON.target} Fire all</button><button class="vb vcustom hidden"></button></div>
+            <div class="vbtns"><button class="vb" data-v="walk">${ICON.walk} Walk</button><button class="vb vjump" data-v="jump">${ICON.jump} Jump</button><button class="vb vdrive hidden" data-v="drive">${ICON.track} <span>Tracks</span></button><button class="vb" data-v="fire">${ICON.target} Fire all</button><button class="vb vcustom hidden"></button></div>
             <div class="vhint">Drag to rotate · tap to pause spin</div></div>
           <div class="info"></div></div></div></div>`);
       $$('.tab', el).forEach((t) => t.addEventListener('click', () => { st.cls = +t.dataset.c; render(); }));
@@ -605,7 +611,7 @@ class App {
       for (const m of mechs) {
         const key = m.custom ? '__c' + m._idx : m.n;
         const count = edit ? edit.lance.filter((n) => (m.custom ? typeof n === 'object' && n.custom.name === m.n : n === m.n)).length : 0;
-        const row = html(`<div class="mech-row nav ${m.custom && !m._ok ? 'invalid' : ''}" data-key="${esc(key)}"><span class="n">${m.custom ? '★ ' : ''}${esc(m.n)}${count ? ` <span class="in">×${count}</span>` : ''}${m.custom && !m._ok ? ' <span class="warn">⚠</span>' : ''}</span><span class="num dim">${m.t}t</span><span class="num faint">${m.w}/${Math.ceil(m.w * 1.5)}/${m.j}</span><span class="num faint">${m.wp.length}w</span></div>`);
+        const row = html(`<div class="mech-row nav ${m.custom && !m._ok ? 'invalid' : ''}" data-key="${esc(key)}"><span class="n">${m.custom ? '★ ' : ''}${esc(m.n)}${m.body && m.body !== 'biped' || m.mot ? ` <span class="ctag" ${tipAttr(chassisName(m), CHASSIS_TIP[m.mot || m.body])}>${esc(chassisTag(m))}</span>` : ''}${count ? ` <span class="in">×${count}</span>` : ''}${m.custom && !m._ok ? ' <span class="warn">⚠</span>' : ''}</span><span class="num dim">${m.t}t</span><span class="num faint">${m.w}/${Math.ceil(m.w * 1.5)}/${m.j}</span><span class="num faint">${m.wp.length}w</span></div>`);
         row._mech = m;
         row.addEventListener('click', () => {
           if (opts.pickStock) { opts.pickStock(m); return; }
@@ -631,7 +637,7 @@ class App {
     const act = (a) => {
       if (a === 'lb' || a === 'rb') { const n = opts.pickStock ? 4 : 5; st.cls = (st.cls + (a === 'rb' ? 1 : n - 1)) % n; st.focus = null; sfx('ui-move'); render(); return true; }
       if (a === 'view' || (!edit && a === 'x')) { salvo(); return true; }
-      if (!edit && a === 'y') { this.preview.setMode(this.preview.mode === 'walk' && this.preview.tpl.j ? 'jump' : 'walk'); return true; }
+      if (!edit && a === 'y') { const pv = this.preview; const seq = ['walk', ...(pv.tpl.j ? ['jump'] : []), ...(pv.tpl.mot ? ['drive'] : [])]; pv.setMode(seq[(seq.indexOf(pv.mode) + 1) % seq.length]); return true; }
       if (!edit) return false;
       if (a === 'x') { edit.lance.pop(); sfx('ui-back'); render(); return true; }
       if (a === 'y') { edit.lance = autoLance(Math.random(), edit.limit, edit.max); sfx('ui-ok'); render(); return true; }

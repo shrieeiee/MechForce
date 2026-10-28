@@ -1,7 +1,7 @@
 // Mech Lab: design custom mechs. Saved designs live in this device's storage and travel
 // with your lance when you play; the host re-checks them against the same rules.
-import { WEAPONS, CLASS_NAMES, critName } from '../core/data.js';
-import { buildTemplate, defaultSpec, distributeArmor, maxArmorPoints, maxWalk, TONNAGES, LOCS, LOC_SHORT, WSTAT, usesAmmo, SLOT_CAP, engineTons, jetTons } from '../core/custom.js';
+import { WEAPONS, CLASS_NAMES, critName, BODY_NAMES, nLocs, locShort, locName } from '../core/data.js';
+import { buildTemplate, defaultSpec, distributeArmor, maxArmorPoints, maxWalk, TONNAGES, WSTAT, usesAmmo, engineTons, jetTons, rechassis } from '../core/custom.js';
 import { $, $$, html, esc, toast, paperDoll } from './ui.js';
 import { attr as tipAttr, weaponBlurb } from './tips.js';
 import { sfx } from './audio.js';
@@ -17,12 +17,14 @@ export function saveDesigns(list) {
 }
 export function designStatus(spec) { const b = buildTemplate(spec); return { ok: b.ok, b }; }
 
-const BUDGET_LABEL = { structure: 'Internal structure', engine: 'Engine', gyro: 'Gyro', cockpit: 'Cockpit', heatsinks: 'Extra heat sinks', jets: 'Jump jets', armor: 'Armour', weapons: 'Weapons', ammo: 'Ammunition' };
+const BUDGET_LABEL = { structure: 'Internal structure', engine: 'Engine', gyro: 'Gyro', cockpit: 'Cockpit', heatsinks: 'Extra heat sinks', jets: 'Jump jets', armor: 'Armour', weapons: 'Weapons', ammo: 'Ammunition', tracks: 'Tracks', conversion: 'Conversion equipment' };
 const BUDGET_TIP = {
-  structure: 'The skeleton: always 10% of the mech\'s tonnage.',
+  structure: 'The skeleton: 10% of the mech\'s tonnage. A tripod\'s third leg makes it 10% heavier.',
   engine: 'Engine size is tonnage × walking speed. Bigger engines get heavy fast — a fast heavy mech spends a lot on engine.',
   gyro: 'Keeps the mech upright. Scales with engine size.',
-  cockpit: 'Always 3 tons.',
+  cockpit: '3 tons, or 4 for the two-seat cockpit of a tripod or QuadVee.',
+  tracks: 'Tracks weigh 10% of the mech\'s tonnage and take a slot in every leg.',
+  conversion: 'The gear that folds a QuadVee into a tank: 10% of tonnage, a slot in every leg.',
   heatsinks: 'The engine includes 10 heat sinks for free. Each extra one weighs 1 ton and takes a slot.',
   jets: 'Each jump jet adds 1 hex of jumping. Weight per jet depends on the mech\'s size.',
   armor: '16 armour points per ton.',
@@ -35,26 +37,33 @@ export function showLab(app, startSpec, { onExit, slotIndex } = {}) {
   let savedIndex = typeof slotIndex === 'number' ? slotIndex : -1;
   let dirty = false;
   let armorTotal = spec.armor.reduce((s, v) => s + v, 0);
+  const body = () => spec.body || 'biped';
+  const motOptions = () => (body() === 'quad' ? [undefined, 'tracks', 'quadvee'] : [undefined, 'tracks']);
+  const MOT_LABEL = { undefined: 'Legs only', tracks: 'Tracks', quadvee: 'QuadVee' };
   const color = '#d9a441';
 
   const change = (fn) => { fn(); dirty = true; render(); };
   const pickLoc = (t) => {
     const b = buildTemplate(spec);
-    const prefs = WEAPONS[t].kind === 'm' ? [1, 3, 2, 4, 5] : [4, 5, 1, 3, 2, 0];
+    const prefs = body() === 'quad' ? [1, 3, 2, 0] : WEAPONS[t].kind === 'm' ? [1, 3, 2, 4, 5] : [4, 5, 1, 3, 2, 0];
     for (const l of prefs) if (b.slotsFree[l] >= WSTAT[t].slots + (usesAmmo(t) ? 1 : 0)) return l;
     return prefs[0];
   };
   const SETTINGS = {
+    body: { label: 'Chassis', tip: '<p><b>Biped</b>: two arms, two legs. Can punch.</p><p><b>Four-legged</b>: no arms, so no punching, but a very steady platform (-2 to piloting rolls while all four legs work), can side-step without turning, and keeps walking after losing a leg.</p><p><b>Tripod</b>: two arms and three legs (-1 to piloting rolls). Needs a 4-ton two-seat cockpit and heavier structure.</p>',
+      fmt: () => BODY_NAMES[body()], step: (d) => { const L = ['biped', 'quad', 'tripod']; const nb = L[(L.indexOf(body()) + d + 3) % 3]; spec = rechassis(spec, nb, spec.mot === 'quadvee' && nb !== 'quad' ? 'tracks' : spec.mot); armorTotal = spec.armor.reduce((a, v) => a + v, 0); } },
+    mot: { label: 'Motive', tip: '<p><b>Tracks</b> (any chassis): the mech can roll at walking speed on tracks instead of walking. On tracks it ignores leg and gyro damage when keeping its balance, but it can\'t enter heavy woods or water and climbing costs double. 10% of tonnage.</p><p><b>QuadVee</b> (four-legged only): converts between a BattleMech and a tracked tank (2 MP). As a tank it makes no movement heat, can\'t fall over and can drive through water, but can\'t jump, kick or side-step. 20% of tonnage for tracks and conversion gear.</p>',
+      fmt: () => MOT_LABEL[spec.mot], step: (d) => { const L = motOptions(); const nm = L[(L.indexOf(spec.mot) + d + L.length) % L.length]; spec = rechassis(spec, body(), nm); } },
     tons: { label: 'Tonnage', tip: 'Heavier mechs carry more armour and weapons but need bigger, heavier engines to move fast.', fmt: () => `${spec.tons} t · ${CLASS_NAMES[spec.tons <= 35 ? 0 : spec.tons <= 55 ? 1 : spec.tons <= 75 ? 2 : 3]}`,
-      step: (d) => { const i = TONNAGES.indexOf(spec.tons); spec.tons = TONNAGES[Math.max(0, Math.min(TONNAGES.length - 1, i + d))]; spec.walk = Math.min(spec.walk, maxWalk(spec.tons)); spec.jump = Math.min(spec.jump, spec.walk); armorTotal = Math.min(armorTotal, maxArmorPoints(spec.tons)); spec.armor = distributeArmor(spec.tons, armorTotal); } },
+      step: (d) => { const i = TONNAGES.indexOf(spec.tons); spec.tons = TONNAGES[Math.max(0, Math.min(TONNAGES.length - 1, i + d))]; spec.walk = Math.min(spec.walk, maxWalk(spec.tons)); spec.jump = Math.min(spec.jump, spec.walk); armorTotal = Math.min(armorTotal, maxArmorPoints(spec.tons, body())); spec.armor = distributeArmor(spec.tons, armorTotal, body()); } },
     walk: { label: 'Speed', tip: 'Movement points per turn. Engine rating = tonnage × walk (max 400).', fmt: () => `walk ${spec.walk} · run ${Math.ceil(spec.walk * 1.5)}`,
       step: (d) => { spec.walk = Math.max(1, Math.min(maxWalk(spec.tons), spec.walk + d)); spec.jump = Math.min(spec.jump, spec.walk); } },
     jump: { label: 'Jump jets', tip: 'Jump distance in hexes. Can\'t exceed walking speed. Jets go in the legs and torsos.', fmt: () => spec.jump ? `${spec.jump} · ${(spec.jump * jetTons(spec.tons)).toFixed(1)} t` : 'None',
       step: (d) => { spec.jump = Math.max(0, Math.min(spec.walk, spec.jump + d)); } },
     hs: { label: 'Heat sinks', tip: 'Heat removed each turn. 10 come free with the engine; extras weigh 1 ton and use a slot each.', fmt: () => `${spec.hs}${spec.hs > 10 ? ` (+${spec.hs - 10} t)` : ' (free)'}`,
       step: (d) => { spec.hs = Math.max(10, Math.min(40, spec.hs + d)); } },
-    armor: { label: 'Armour', tip: 'Total armour points, spread automatically over the body (16 points per ton). Use Max armour to fill every location.', fmt: () => `${armorTotal} / ${maxArmorPoints(spec.tons)} pts`,
-      step: (d) => { armorTotal = Math.max(0, Math.min(maxArmorPoints(spec.tons), armorTotal + d * 16)); spec.armor = distributeArmor(spec.tons, armorTotal); } },
+    armor: { label: 'Armour', tip: 'Total armour points, spread automatically over the body (16 points per ton). Use Max armour to fill every location.', fmt: () => `${armorTotal} / ${maxArmorPoints(spec.tons, body())} pts`,
+      step: (d) => { armorTotal = Math.max(0, Math.min(maxArmorPoints(spec.tons, body()), armorTotal + d * 16)); spec.armor = distributeArmor(spec.tons, armorTotal, body()); } },
   };
 
   const render = () => {
@@ -75,9 +84,9 @@ export function showLab(app, startSpec, { onExit, slotIndex } = {}) {
             <div class="tot"><span>Total</span><b class="num ${over ? 'bad' : ''}">${b.used.toFixed(1)} / ${spec.tons}</b></div></div>
         </div>
         <div class="panel lab-mid">
-          <div class="viewer lab-viewer"><div class="vbtns"><button class="vb" data-v="walk">${ICON.walk} Walk</button>${spec.jump ? `<button class="vb" data-v="jump">${ICON.jump} Jump</button>` : ''}<button class="vb" data-v="fire">${ICON.target} Fire all</button></div></div>
+          <div class="viewer lab-viewer"><div class="vbtns"><button class="vb" data-v="walk">${ICON.walk} Walk</button>${spec.jump ? `<button class="vb" data-v="jump">${ICON.jump} Jump</button>` : ''}${spec.mot ? `<button class="vb" data-v="drive">${ICON.track} ${spec.mot === 'quadvee' ? 'Convert' : 'Tracks'}</button>` : ''}<button class="vb" data-v="fire">${ICON.target} Fire all</button></div></div>
           <div class="slots-map" ${tipAttr('Critical slots', '<p>Each body location has a limited number of slots. Fixed parts (cockpit, engine, gyro, actuators) take some; weapons, ammo, extra heat sinks and jump jets fill the rest.</p><p>Hits that get through the armour can strike any of these — a hit on an ammo bin can explode.</p>')}>
-            ${[0, 4, 1, 2, 3, 5, 6, 7].map((l) => `<div class="loc"><b>${LOC_SHORT[l]}</b><div class="cells">${tpl.cr[l].slice(0, SLOT_CAP[l]).map((c) => `<i class="${cellClass(c)}" title="${esc(c < 0 ? 'Free' : critName(c))}"></i>`).join('')}</div><small>${b.slotsFree[l]} free</small></div>`).join('')}
+            ${[0, 4, 1, 2, 3, 5, 6, 8, 7].filter((l) => l < nLocs(body())).map((l) => `<div class="loc"><b ${tipAttr(locName(body(), l), `${b.slotCap[l]} slots`)}>${locShort(body(), l)}</b><div class="cells">${tpl.cr[l].slice(0, b.slotCap[l]).map((c) => `<i class="${cellClass(c)}" title="${esc(c < 0 ? 'Free' : critName(c, body()))}"></i>`).join('')}</div><small>${b.slotsFree[l]} free</small></div>`).join('')}
           </div>
           <div class="msgs">${b.errors.map((e) => `<div class="err">${esc(e)}</div>`).join('')}${b.warnings.map((e) => `<div class="warn-m">${esc(e)}</div>`).join('')}</div>
         </div>
@@ -85,7 +94,7 @@ export function showLab(app, startSpec, { onExit, slotIndex } = {}) {
           <h3>Mounted weapons <span class="faint">(${spec.weapons.length}/16)</span></h3>
           <div class="mounted">${spec.weapons.map((w, i) => `<div class="mrow nav" data-key="mw${i}" data-mw="${i}" ${tipAttr(WEAPONS[w.t].name, `<p>${esc(weaponBlurb(w.t))}</p><p>${WSTAT[w.t].tons} t · ${WSTAT[w.t].slots} slot${WSTAT[w.t].slots > 1 ? 's' : ''} · ${WSTAT[w.t].heat} heat · damage ${WSTAT[w.t].dmg}${WEAPONS[w.t].n > 1 ? ' × ' + WEAPONS[w.t].n : ''} · range ${WSTAT[w.t].rng}</p><p>Left/right moves it to another location${usesAmmo(w.t) ? '; Y changes the tons of ammo' : ''}; X removes it.</p>`)}>
               <span class="wn"><b>${esc(WEAPONS[w.t].short)}</b><small>${WSTAT[w.t].tons} t${usesAmmo(w.t) ? ` + ${w.ammo} t ammo (${w.ammo * WSTAT[w.t].ammo} shots)` : ''}</small></span>
-              <span class="locsel"><button data-act="locl" aria-label="Previous location">◀</button><span>${LOC_SHORT[w.loc]}</span><button data-act="locr" aria-label="Next location">▶</button></span>
+              <span class="locsel"><button data-act="locl" aria-label="Previous location">◀</button><span>${locShort(body(), w.loc)}</span><button data-act="locr" aria-label="Next location">▶</button></span>
               ${usesAmmo(w.t) ? `<button class="mini" data-act="ammo" aria-label="Ammo">+ammo</button>` : '<span></span>'}
               <button class="mini x" data-act="del" aria-label="Remove">✕</button></div>`).join('') || '<div class="faint">No weapons yet. Add some below.</div>'}</div>
           <h3>Add weapon</h3>
@@ -99,13 +108,13 @@ export function showLab(app, startSpec, { onExit, slotIndex } = {}) {
     nameIn.addEventListener('input', () => { spec.name = nameIn.value; dirty = true; $('.screen-head h2', el).textContent = buildTemplate(spec).spec.name; });
     nameIn.addEventListener('click', () => nameIn.focus());
     $$('[data-setting]', el).forEach((bt) => bt.addEventListener('click', () => change(() => SETTINGS[bt.dataset.setting].step(1))));
-    $('[data-key=maxarmor]', el).addEventListener('click', () => change(() => { armorTotal = maxArmorPoints(spec.tons); spec.armor = distributeArmor(spec.tons, armorTotal); }));
+    $('[data-key=maxarmor]', el).addEventListener('click', () => change(() => { armorTotal = maxArmorPoints(spec.tons, body()); spec.armor = distributeArmor(spec.tons, armorTotal, body()); }));
     $('[data-key=stock]', el).addEventListener('click', () => { onExit && onExit('stock', spec); });
     $$('.mrow', el).forEach((row) => {
       const i = +row.dataset.mw;
       row.addEventListener('click', (e) => {
         const act = e.target.closest('[data-act]')?.dataset.act;
-        if (act === 'locl' || act === 'locr') change(() => { spec.weapons[i].loc = (spec.weapons[i].loc + (act === 'locr' ? 1 : 7)) % 8; });
+        if (act === 'locl' || act === 'locr') change(() => { const n = nLocs(body()); spec.weapons[i].loc = (spec.weapons[i].loc + (act === 'locr' ? 1 : n - 1)) % n; });
         else if (act === 'ammo') change(() => { spec.weapons[i].ammo = (spec.weapons[i].ammo + 1) % 5; });
         else if (act === 'del') change(() => { spec.weapons.splice(i, 1); });
       });
@@ -159,7 +168,7 @@ export function showLab(app, startSpec, { onExit, slotIndex } = {}) {
     if ((a === 'left' || a === 'right') && cur) {
       const d = a === 'right' ? 1 : -1;
       if (cur.dataset.setting) { change(() => SETTINGS[cur.dataset.setting].step(d)); sfx('ui-move'); return true; }
-      if (cur.dataset.mw !== undefined) { const i = +cur.dataset.mw; change(() => { spec.weapons[i].loc = (spec.weapons[i].loc + (d > 0 ? 1 : 7)) % 8; }); sfx('ui-move'); return true; }
+      if (cur.dataset.mw !== undefined) { const i = +cur.dataset.mw; const n = nLocs(body()); change(() => { spec.weapons[i].loc = (spec.weapons[i].loc + (d > 0 ? 1 : n - 1)) % n; }); sfx('ui-move'); return true; }
     }
     if (a === 'x' && cur && cur.dataset.mw !== undefined) { const i = +cur.dataset.mw; change(() => spec.weapons.splice(i, 1)); sfx('ui-back'); return true; }
     if (a === 'y' && cur && cur.dataset.mw !== undefined) { const i = +cur.dataset.mw; if (usesAmmo(spec.weapons[i].t)) change(() => { spec.weapons[i].ammo = (spec.weapons[i].ammo + 1) % 5; }); return true; }
@@ -177,6 +186,8 @@ function cellClass(c) {
   if (c <= 28) return 'ammo';
   if (c === 50 || c === 52) return 'jet';
   if (c === 51) return 'hs';
+  if (c === 65 || c === 66) return 'motive';
+  if (c === 67) return 'equip';
   return 'fixed';
 }
 

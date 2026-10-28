@@ -1,6 +1,6 @@
 // Mech Bay 3D viewer: turntable, idle/walk/jump animation, weapon fire demo.
 import * as THREE from 'three';
-import { buildMech, triggerWeaponAnim, tickWeaponAnims } from './models.js';
+import { buildMech, triggerWeaponAnim, tickWeaponAnims, rollTracks } from './models.js';
 import { WEAPONS } from '../core/data.js';
 import { sfx } from './audio.js';
 import { input } from './input.js';
@@ -93,7 +93,7 @@ export class MechPreview {
     this.tpl = tpl;
     const weapons = tpl.wp.map((w, i) => ({ t: w[0], loc: w[7], i, heat: w[1], dmg: w[2], rng: w[3] }));
     this.weapons = weapons;
-    this.model = buildMech({ design: tpl.n, tons: tpl.t, cls: tpl.c, weapons, jump: tpl.j }, color);
+    this.model = buildMech({ design: tpl.n, tons: tpl.t, cls: tpl.c, weapons, jump: tpl.j, body: tpl.body, mot: tpl.mot }, color);
     this.turntable.add(this.model.root);
     this.demoIdx = 0; this.demoT = 1.2; this.mode = 'idle'; this.modeT = 0;
     this.setHighlight(null);
@@ -190,20 +190,27 @@ export class MechPreview {
     if (m) {
       this.modeT += dt;
       const legs = m.legs;
-      // automatic routine: idle -> walk -> idle -> jump (if jump jets)
+      // automatic routine: idle -> walk -> idle / jump (if jump jets) / drive (if tracks)
       if (this.mode === 'idle' && this.modeT > 7) this.setMode('walk');
-      else if (this.mode === 'walk' && this.modeT > 3.2) this.setMode(this.tpl.j && Math.random() < 0.6 ? 'jump' : 'idle');
+      else if (this.mode === 'walk' && this.modeT > 3.2) this.setMode(this.tpl.mot && Math.random() < 0.6 ? 'drive' : this.tpl.j && Math.random() < 0.6 ? 'jump' : 'idle');
       else if (this.mode === 'jump' && this.modeT > 1.6) this.setMode('idle');
+      else if (this.mode === 'drive' && this.modeT > 4.2) this.setMode('idle');
+      if (this.mode === 'drive' && !m.wheels.length) this.setMode('walk');
+      // kneel onto the tracks (or fold into a QuadVee's tank mode), roll, then stand up
+      const T = this.modeT;
+      const wantV = this.mode === 'drive' ? (T < 0.8 ? T / 0.8 : T < 3.4 ? 1 : Math.max(0, 1 - (T - 3.4) / 0.8)) : 0;
+      if (wantV > 0 || m.vk > 0) m.setVehicle(this.mode === 'drive' ? wantV * wantV * (3 - 2 * wantV) : Math.max(0, m.vk - dt * 2));
+      if (this.mode === 'drive' && wantV >= 1) rollTracks(m, dt * 7);
       let bodyY = 0, bob = 0;
       if (this.mode === 'walk') {
         const ph = this.modeT * 5.2;
         const sw = Math.sin(ph) * 0.32;
-        legs.forEach((l, j) => { l.hip.rotation.x = j ? sw : -sw; l.knee.rotation.x = (l.bird ? 0.7 : 0) + Math.max(0, j ? -sw : sw) * 1.1; });
+        legs.forEach((l) => { const g = sw * l.gait; l.hip.rotation.x = g; l.knee.rotation.x = l.rest + Math.max(0, -g) * 1.1; });
         m.arms.forEach((a, j) => { a.sh.rotation.x = (j ? -sw : sw) * 0.25; });
         bob = Math.abs(Math.cos(ph)) * 0.04 * m.scale;
         if (Math.floor(ph / Math.PI) !== Math.floor((ph - dt * 5.2) / Math.PI)) sfx('step', { gain: 0.25, rate: 1.4 - this.tpl.t / 200 });
-      } else {
-        legs.forEach((l) => { l.hip.rotation.x *= 0.85; l.knee.rotation.x = (l.bird ? 0.7 : 0) + (l.knee.rotation.x - (l.bird ? 0.7 : 0)) * 0.85; });
+      } else if (this.mode !== 'drive' && !m.vk) {
+        legs.forEach((l) => { l.hip.rotation.x *= 0.85; l.knee.rotation.x = l.rest + (l.knee.rotation.x - l.rest) * 0.85; });
         m.arms.forEach((a) => { a.sh.rotation.x *= 0.85; });
       }
       if (this.mode === 'jump') {
@@ -211,7 +218,7 @@ export class MechPreview {
         bodyY = Math.sin(k * Math.PI) * 0.7 * m.scale;
         if (k < 0.85) for (const j of m.jets) { const p = j.getWorldPosition(new THREE.Vector3()); this.particle(p, new THREE.Vector3((Math.random() - 0.5) * 0.3, -2.4, (Math.random() - 0.5) * 0.3), '#7fd0ff', 0.12, 0.3); }
       }
-      m.body.position.y = bodyY + bob + Math.sin(this.t * 1.7) * 0.008;
+      m.body.position.y = bodyY + bob + Math.sin(this.t * 1.7) * 0.008 + m.vOffset;
       // torso scans around; arms aim when firing
       m.torso.rotation.y = Math.sin(this.t * 0.6) * 0.35;
       // fire demo
