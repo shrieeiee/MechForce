@@ -1,8 +1,8 @@
 import { MECHS as DISK_MECHS } from './mechdata.js';
 import { EXTRA_MECHS } from './extradata.js';
 
-export const VERSION = '1.9.0';
-export const PROTOCOL = 4;
+export const VERSION = '1.10.0';
+export const PROTOCOL = 5;
 
 // Weapon types, in the original program's order.
 // kind: b=ballistic, m=missile, e=energy. n = missiles per volley. snd = sound family
@@ -91,6 +91,39 @@ export const TERRAIN = [
   { name: 'Water', cost: 2, woods: 0, depth: 1 },
   { name: 'Deep Water', cost: 4, woods: 0, depth: 2 },
 ];
+
+// ---- structures (BattleTech gun emplacements, bunkers, buildings, walls). cf = construction
+// factor (hit points); hard = hardened (takes half damage); h = height in levels for line of sight.
+export const STRUCTS = {
+  turret: { name: 'Gun emplacement', cf: 40, h: 1, slots: 1, hard: false, burns: false },
+  bunker: { name: 'Bunker', cf: 90, h: 1, slots: 2, hard: true, burns: false },
+  building: { name: 'Building', cf: 60, h: 2, slots: 0, hard: false, burns: true },
+  wall: { name: 'Wall', cf: 30, h: 1, slots: 0, hard: true, burns: false },
+};
+export const STRUCT_KINDS = Object.keys(STRUCTS);
+// Weapon fits for emplacements and bunkers (weapon type indexes, see WEAPONS)
+export const LOADOUTS = {
+  ac10: { name: 'AC/10', w: [2] },
+  ac20: { name: 'AC/20', w: [3] },
+  lrm: { name: 'LRM 20', w: [8] },
+  srm: { name: 'Twin SRM 6', w: [11, 11] },
+  laser: { name: 'Twin large lasers', w: [14, 14] },
+  ppc: { name: 'Plasma cannon', w: [16] },
+  mg: { name: 'Machine guns', w: [4, 4] },
+};
+export const LOADOUT_IDS = Object.keys(LOADOUTS);
+export const STRUCT_GUNNERY = 4; // automated emplacement crews
+export const TEAM_ZONE_NAMES = ['West', 'East', 'North', 'South'];
+
+// ---- climate: heat added (or removed) at the end of every activation, after TacOps'
+// extreme-temperature rule (one heat per 10°C beyond the comfortable range)
+export const CLIMATE = {
+  temperate: { heat: 0, text: 'Mild climate: no effect on heat.' },
+  desert: { heat: 1, text: 'Desert heat: +1 heat every turn.' },
+  snow: { heat: -1, text: 'Arctic cold: 1 extra heat removed every turn.' },
+  lunar: { heat: 0, text: 'Airless moon: no effect on heat.' },
+  volcanic: { heat: 2, text: 'Volcanic heat: +2 heat every turn, and the lakes are magma.' },
+};
 
 export const THEMES = [
   { id: 'temperate', name: 'Temperate' },

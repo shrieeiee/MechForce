@@ -44,6 +44,16 @@ Initiative each round; sides alternate activating one mech at a time. Walk / run
 
 Turn on **Fog of war** in the battle setup and each side only sees enemy mechs one of its own mechs can see (line of sight, or standing next to it). Unseen enemies move in secret; a faded "?" marker shows where each was last spotted, until you can see that spot is empty. Firing gives a mech away to the side it shot at for the rest of the round, wrecks stay visible, and everything is revealed when the battle ends. The computer plays by the same rules. Online, the host only sends each player what their side can see; on a hotseat device the view switches with each player's turn.
 
+## Map editor, defences and buildings
+
+**Map Editor** (main menu) builds your own battlefields: paint clear ground, woods, rough and water, raise and lower hills (levels 0–5), and place **gun emplacements** (one weapon), **bunkers** (two weapons, hardened), **buildings** and **walls**. Choose which side each emplacement fights for and what it mounts (AC/10, AC/20, LRM 20, twin SRM 6, twin large lasers, plasma cannon, machine guns). Mirror mode paints both halves at once — *Rotate* gives a perfectly fair West-vs-East map. Maps are saved on the device and picked under **Map** in the battle setup; the host sends the map to everyone, so they work online too.
+
+Emplacements and bunkers are run by the computer for their side: at the end of every round each one fires at the best enemy it can see (gunnery 4, ammo runs out). Every structure blocks movement and sight, can be shot (immobile, -4 to hit) and collapses into rubble. Random battlefields can be fortified with **Defences: Light/Heavy** in the setup.
+
+## Fire, smoke, water and climate
+
+Following BattleTech's Tactical Operations rules: flamers, plasma weapons, stray lasers and exploding mechs can set woods and buildings on fire. Fires spread downwind each round (the wind sometimes shifts), burn heavy woods down to light woods and then to rough ground, and give off smoke that blocks sight like woods. Standing in fire adds +5 heat. Water cools a mech but stepping in needs a piloting roll; on volcanic worlds the lakes are magma (+5/+10 heat, leg damage, no cooling). Deserts add 1 heat a turn, volcanic worlds 2, and arctic cold removes 1.
+
 ## Up to four players
 
 Every mission supports 2–4 forces, each a player (local hotseat or online) or the computer. Objective missions are played as two teams (2v2, 2v1 or 3v1 — move forces between teams in the lobby); Search & Destroy can be a free-for-all or two teams. Teammates deploy together, can't damage each other and win together.

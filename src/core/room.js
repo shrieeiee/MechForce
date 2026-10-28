@@ -5,6 +5,7 @@ import { aiNextCommand } from './ai.js';
 import { MECHS, MISSIONS, PROTOCOL, VERSION, SIDE_NAMES, SIDE_COLORS, mechBV } from './data.js';
 import { buildTemplate } from './custom.js';
 import { fogView, fogEvents, viewTeams } from './fog.js';
+import { sanitizeMap } from './maps.js';
 
 let nextClient = 1;
 const rid = () => Math.random().toString(36).slice(2, 10);
@@ -61,7 +62,7 @@ export class Room {
     this.local = local;
     this.clients = new Map();
     this.hostId = null;
-    this.settings = { mission: 'generic', mapSize: 'M', theme: 'temperate', tonnage: 200, seed: rid(), sides: 2, lanceSize: 4, teamMode: 'ffa', fog: false };
+    this.settings = { mission: 'generic', mapSize: 'M', theme: 'temperate', tonnage: 200, seed: rid(), sides: 2, lanceSize: 4, teamMode: 'ffa', fog: false, defences: 'none', customMap: null };
     this.slots = [];
     this.game = null;
     this.aiTimer = null;
@@ -171,8 +172,16 @@ export class Room {
       case 'settings': {
         if (!isHost || this.game) return err('Only the host can change settings');
         const s = msg.settings || {};
-        for (const k of ['mission', 'mapSize', 'theme', 'tonnage', 'seed', 'sides', 'lanceSize', 'teamMode', 'fog']) if (s[k] !== undefined) this.settings[k] = s[k];
+        for (const k of ['mission', 'mapSize', 'theme', 'tonnage', 'seed', 'sides', 'lanceSize', 'teamMode', 'fog', 'defences']) if (s[k] !== undefined) this.settings[k] = s[k];
         this.settings.fog = !!this.settings.fog;
+        if (!['none', 'light', 'heavy'].includes(this.settings.defences)) this.settings.defences = 'none';
+        if (s.mapSize !== undefined && s.customMap === undefined) this.settings.customMap = null;
+        // a battlefield from the map editor (checked here so a bad map can't break the game)
+        if (s.customMap !== undefined) {
+          const cm = s.customMap ? sanitizeMap(s.customMap) : null;
+          this.settings.customMap = cm;
+          if (cm) { this.settings.mapSize = cm.size; this.settings.theme = cm.theme; }
+        }
         this.settings.tonnage = Math.max(20, Math.min(800, +this.settings.tonnage || 200));
         this.settings.lanceSize = Math.max(1, Math.min(4, +this.settings.lanceSize || 4));
         this.resizeSlots();
@@ -236,6 +245,7 @@ export class Room {
         if (problems.length) return err(problems[0]);
         this.game = createGame({
           seed: this.settings.seed, mission: this.settings.mission, mapSize: this.settings.mapSize, theme: this.settings.theme, fog: !!this.settings.fog,
+          customMap: this.settings.customMap || null, defences: this.settings.defences,
           sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5 })),
         });
         for (const cl of this.clients.values()) if (cl.connected) this.send(cl.id, { t: 'start', state: this.viewFor(cl.id, this.game) });

@@ -49,6 +49,7 @@ export function fogEvents(st, events, teams) {
   const ownTeam = (m) => teams.includes(m.team ?? m.side);
   const out = [];
   for (const e of events) {
+    if (e.k === 'sshot') { const t = st.mechs[e.target]; if (!t || ownTeam(t) || vis.get(t.id)) out.push(e); continue; }
     const m = e.id !== undefined ? st.mechs[e.id] : null;
     if (!m || ownTeam(m)) { out.push(e); continue; }
     if (e.k === 'move') {
@@ -59,6 +60,7 @@ export function fogEvents(st, events, teams) {
       continue;
     }
     if (e.k === 'destroyed' || e.k === 'win') { out.push(e); continue; }
+    if (e.k === 'shot' && e.starget !== undefined) { if (vis.get(e.id)) out.push(e); continue; }
     if (e.k === 'shot' || e.k === 'melee') { const t = st.mechs[e.target]; if (vis.get(e.id) && t && vis.get(t.id)) out.push(e); continue; }
     if (vis.get(e.id)) out.push(e);
   }

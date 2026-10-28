@@ -1,7 +1,8 @@
 // Computer opponent. Returns one command at a time for the active AI side.
 import { WEAPONS, TERRAIN } from './data.js';
 import { computeReach, canEndAt, toHit, availableMechs, operational, canAct, lineOfSight, inArc, missionOf,
-  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo } from './rules.js';
+  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo, toHitStructure, envHeat, smokeAt, isBurning, defenceTargets } from './rules.js';
+import { STRUCTS } from './data.js';
 import { distance, relBearing } from './hex.js';
 import { chance, nextRand } from './rng.js';
 
@@ -83,7 +84,17 @@ function evalPositions(st, m) {
     hexCache.set(key, info);
     return info;
   };
-  const myWoods = (x, y) => TERRAIN[tileOf(st, x, y)].woods + (TERRAIN[tileOf(st, x, y)].depth === 1 ? 1 : 0);
+  const myWoods = (x, y) => TERRAIN[tileOf(st, x, y)].woods + (TERRAIN[tileOf(st, x, y)].depth === 1 ? 1 : 0) + smokeAt(st, x, y);
+  // enemy gun emplacements and bunkers: they shoot back at the end of the round, and are
+  // worth knocking out when there's nothing better to shoot
+  const forts = (st.structures || []).filter((s) => !s.dead && s.team !== m.team && (s.team >= 0 || STRUCTS[s.kind].slots));
+  const armedForts = forts.filter((s) => s.team >= 0 && s.weapons.some((w) => w.ok && w.ammo !== 0));
+  const fortInfo = new Map();
+  const fortAt = (x, y) => {
+    const key = y * w + x;
+    if (!fortInfo.has(key)) fortInfo.set(key, armedForts.map((s) => ({ s, los: lineOfSight(st, s.x, s.y, x, y), d: distance(x, y, s.x, s.y) })));
+    return fortInfo.get(key);
+  };
   const best = { score: -1e9, cmd: null };
   const fragile = totalArmor(m) / maxArmor(m);
   // QuadVees also weigh converting: vehicle mode makes no movement heat and can't fall,
@@ -152,7 +163,29 @@ function evalPositions(st, m) {
             threat += ed * rearF * (e.activated ? 0.6 : 1);
           }
         }
-        let score = offense * 1.2 - threat * (0.35 + (1 - fragile) * 0.5) + convBias;
+        // incoming fire from enemy defences at the end of the round
+        for (const fi of fortAt(x, y)) {
+          if (!fi.los.ok) continue;
+          for (const wp of fi.s.weapons) {
+            if (!wp.ok || wp.ammo === 0 || fi.d > wp.rng) continue;
+            const s2 = Math.ceil(wp.rng / 3), mr = Math.ceil(wp.rng * 2 / 3);
+            const tn = 4 + (fi.d <= s2 ? 0 : fi.d <= mr ? 2 : 4) + defMod + fi.los.woods + myWoods(x, y) + (wp.minr && fi.d <= wp.minr ? wp.minr - fi.d + 1 : 0);
+            threat += expectedDamage(wp, chance(tn));
+          }
+          // ...and we could shoot it
+          if (offense < 3) {
+            const opts = [];
+            for (const wp of m.weapons) if (wp.ok && wp.ammo !== 0 && fi.d <= wp.rng && inArc(m, wp.loc, fi.s.x, fi.s.y, { x, y, f })) {
+              const s2 = Math.ceil(wp.rng / 3), mr = Math.ceil(wp.rng * 2 / 3);
+              const p = chance(m.pilot.gun + (fi.d <= s2 ? 0 : fi.d <= mr ? 2 : 4) + atkMod - 4 + fi.los.woods);
+              if (p > 0) opts.push({ w: wp, ed: expectedDamage(wp, p), heat: wp.heat });
+            }
+            if (opts.length) offense = Math.max(offense, bestVolley(opts, heatBudget(st, m, mvHeat)).dmg * 0.55);
+          }
+        }
+        // the ground itself: fire, magma, climate
+        const envH = envHeat(st, { ...m, x, y });
+        let score = offense * 1.2 - threat * (0.35 + (1 - fragile) * 0.5) + convBias - Math.max(0, envH) * 1.6 - (isBurning(st, x, y) ? 4 : 0);
         if (goal) {
           const gd = goal.edge ? (goal.edge === 'E' ? w - 1 - x : x) : distance(x, y, goal.x, goal.y);
           score -= gd * goal.weight;
@@ -169,7 +202,7 @@ function evalPositions(st, m) {
           if (ad > 5) score -= (ad - 5) * 0.3;
         }
         score += st.map.e[y * w + x] * 0.4;
-        if (m.heat + mvHeat - dissipation(st, m) > 8) score -= (m.heat + mvHeat - dissipation(st, m) - 8) * 1.5;
+        if (m.heat + mvHeat + envH - dissipation(st, { ...m, x, y }) > 8) score -= (m.heat + mvHeat + envH - dissipation(st, { ...m, x, y }) - 8) * 1.5;
         score += nextRand({ rng: (x * 73856093) ^ (y * 19349663) ^ (f * 83492791) ^ st.seq }) * 0.3;
         if (score > best.score) best.score = score, best.cmd = { type: 'move', id: m.id, x, y, f, mode, ...(convert ? { convert: true } : {}) };
       }
@@ -204,8 +237,20 @@ function chooseAttack(st, m) {
       if (val > best.v) best = { v: val, cmd: { type: 'melee', id: m.id, target: e.id, kind } };
     }
   }
+  // enemy emplacements: worth a volley when no mech is a better target
+  for (const s of (st.structures || [])) {
+    if (s.dead || s.team === m.team || (s.team < 0 && !STRUCTS[s.kind].slots)) continue;
+    const opts = [];
+    for (const wp of m.weapons) { const th = toHitStructure(st, m, s, wp); if (th.ok && th.p > 0.05) opts.push({ w: wp, ed: expectedDamage(wp, th.p), heat: wp.heat }); }
+    if (!opts.length) continue;
+    const v = bestVolley(opts, budget);
+    const armed = s.team >= 0 && s.weapons.some((w) => w.ok && w.ammo !== 0);
+    const val = v.dmg * (armed ? (s.cf <= v.dmg * 1.5 ? 0.9 : 0.6) : 0.15);
+    if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, structure: s.id, weapons: v.picked.map((o) => o.w.i) } };
+  }
   return best.cmd || { type: 'end', id: m.id };
 }
+void defenceTargets;
 
 export function aiNextCommand(st) {
   const side = activeSide(st);

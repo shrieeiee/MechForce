@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { center, DIR_ANGLE, toAxial, fromAxial, neighbor } from '../core/hex.js';
 import { WEAPONS, TERRAIN } from '../core/data.js';
 import { totalArmor, maxArmor, operational } from '../core/rules.js';
-import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims, rollTracks } from './models.js';
+import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims, rollTracks, buildStructure } from './models.js';
 import { sfx } from './audio.js';
 import { input } from './input.js';
 
@@ -99,24 +99,18 @@ export class Renderer {
     if (this.composer) { this.composer.setSize(w, h); this.composer.setPixelRatio(this.gl.getPixelRatio()); }
   }
 
-  // --------------------------------------------------------------- terrain
-  buildMap(map) {
-    this.map = map;
-    this.world.clear();
-    this.marks = this.marks ? [] : this.marks;
-    const th = THEMES[map.theme] || THEMES.temperate;
-    this.theme = th;
-    this.scene.background = new THREE.Color(th.sky);
-    this.scene.fog = new THREE.Fog(th.fog, 40, 110);
-    this.hemi.color.set(th.hemi[0]); this.hemi.groundColor.set(th.hemi[1]);
-    this.hemi.intensity = map.theme === 'lunar' ? 0.35 : 0.9;
-    this.sun.color.set(th.sun);
-    this.sun.intensity = map.theme === 'volcanic' ? 1.4 : 2.3;
+  // Terrain meshes live in their own group so fire, rubble and the map editor can rebuild
+  // them without touching mechs, structures or effects.
+  buildTerrain(map) {
+    const th = this.theme;
+    if (this.terrainGroup) { this.world.remove(this.terrainGroup); this.terrainGroup.traverse((o) => { if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose(); }); }
+    const tg = this.terrainGroup = new THREE.Group();
+    this.world.add(tg);
+    const rnd = (i) => { const x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); };
     const { w, h } = map;
     const pos = [], col = [], idx = [];
     const lines = [];
     const tmpC = new THREE.Color();
-    const rnd = (i) => { const x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); };
     const corners = [];
     for (let i = 0; i < 6; i++) { const a = (60 * i - 30) * Math.PI / 180; corners.push([Math.cos(a), Math.sin(a)]); }
     let vi = 0;
@@ -173,14 +167,14 @@ export class Renderer {
     const terrain = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0.02, flatShading: true }));
     terrain.receiveShadow = true; terrain.castShadow = true;
     this.terrain = terrain;
-    this.world.add(terrain);
+    tg.add(terrain);
     const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
-    this.world.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: map.theme === 'snow' ? '#5a6878' : '#000000', transparent: true, opacity: map.theme === 'snow' ? 0.22 : 0.16 })));
+    tg.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: map.theme === 'snow' ? '#5a6878' : '#000000', transparent: true, opacity: map.theme === 'snow' ? 0.22 : 0.16 })));
     if (waterPos.length) {
       const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(waterPos, 3)); wg.setIndex(waterIdx); wg.computeVertexNormals();
       this.waterMat = new THREE.MeshStandardMaterial({ color: th.water, transparent: !th.lava, opacity: th.lava ? 1 : 0.72, roughness: th.lava ? 0.7 : 0.08, metalness: th.lava ? 0 : 0.3,
         emissive: th.lava ? new THREE.Color('#ff3c00') : new THREE.Color('#0a2a3a'), emissiveIntensity: th.lava ? 1.3 : 0.3 });
-      this.world.add(new THREE.Mesh(wg, this.waterMat));
+      tg.add(new THREE.Mesh(wg, this.waterMat));
     } else this.waterMat = null;
     // ground skirt
     const c0 = center(0, 0), c1 = center(w - 1, h - 1);
@@ -188,7 +182,7 @@ export class Renderer {
     const cx = (this.bounds.x0 + this.bounds.x1) / 2, cz = (this.bounds.z0 + this.bounds.z1) / 2;
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: th.ground, roughness: 1 }));
     ground.rotation.x = -Math.PI / 2; ground.position.set(cx, -0.55, cz); ground.receiveShadow = true;
-    this.world.add(ground);
+    tg.add(ground);
     // trees and rocks
     const treeCount = this.quality === 'low' ? [0, 2, 3] : [0, 3, 6];
     const trees = [], rocks = [];
@@ -218,7 +212,7 @@ export class Renderer {
         im.setColorAt(i, new THREE.Color(tr.dark ? th.tree[1] : th.tree[0]).offsetHSL(0, 0, (rnd(i) - 0.5) * 0.08));
       });
       im.castShadow = true; im.receiveShadow = true; it.castShadow = true;
-      this.world.add(im, it);
+      tg.add(im, it);
     }
     if (rocks.length) {
       const rg = new THREE.DodecahedronGeometry(1, 0);
@@ -226,16 +220,36 @@ export class Renderer {
       const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
       rocks.forEach((r, i) => { q.setFromEuler(new THREE.Euler(r.x, r.z, r.x * r.z)); sc.set(r.s, r.s * 0.7, r.s); p.set(r.x, r.y + r.s * 0.3, r.z); m4.compose(p, q, sc); rm.setMatrixAt(i, m4); });
       rm.castShadow = true; rm.receiveShadow = true;
-      this.world.add(rm);
+      tg.add(rm);
     }
     if (th.stars) {
       const sp = [];
       for (let i = 0; i < 900; i++) { const a = rnd(i) * Math.PI * 2, b = rnd(i + 999) * 0.45 + 0.08; sp.push(cx + Math.cos(a) * Math.cos(b) * 160, Math.sin(b) * 160, cz + Math.sin(a) * Math.cos(b) * 160); }
       const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
-      this.world.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: '#ffffff', size: 0.6, fog: false })));
+      tg.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: '#ffffff', size: 0.6, fog: false })));
       const planet = new THREE.Mesh(new THREE.SphereGeometry(12, 32, 16), new THREE.MeshStandardMaterial({ color: '#3a6fb0', emissive: '#10284a', emissiveIntensity: 0.6, fog: false }));
-      planet.position.set(cx - 90, 45, cz - 110); this.world.add(planet);
+      planet.position.set(cx - 90, 45, cz - 110); tg.add(planet);
     }
+  }
+  updateTerrain(map) { this.map = map; this.buildTerrain(map); }
+
+  // --------------------------------------------------------------- terrain
+  buildMap(map) {
+    this.gen = (this.gen || 0) + 1;
+    this.map = map;
+    this.world.clear();
+    this.marks = this.marks ? [] : this.marks;
+    const th = THEMES[map.theme] || THEMES.temperate;
+    this.theme = th;
+    this.scene.background = new THREE.Color(th.sky);
+    this.scene.fog = new THREE.Fog(th.fog, 40, 110);
+    this.hemi.color.set(th.hemi[0]); this.hemi.groundColor.set(th.hemi[1]);
+    this.hemi.intensity = map.theme === 'lunar' ? 0.35 : 0.9;
+    this.sun.color.set(th.sun);
+    this.sun.intensity = map.theme === 'volcanic' ? 1.4 : 2.3;
+    this.buildTerrain(map);
+    const { w, h } = map;
+    const cx = (this.bounds.x0 + this.bounds.x1) / 2, cz = (this.bounds.z0 + this.bounds.z1) / 2;
     // sun & shadow frustum cover the map
     const span = Math.max(this.bounds.x1 - this.bounds.x0, this.bounds.z1 - this.bounds.z0) * 0.65;
     this.sun.position.set(cx - 14, 26, cz - 10);
@@ -250,6 +264,10 @@ export class Renderer {
     this.mechs.forEach((m) => { m.label.remove(); });
     this.mechs.clear();
     this.mechGroup = new THREE.Group(); this.world.add(this.mechGroup);
+    this.structGroup = new THREE.Group(); this.world.add(this.structGroup);
+    this.envGroup = new THREE.Group(); this.world.add(this.envGroup);
+    if (this.structs) this.structs.clear(); else this.structs = new Map();
+    this.fireFx = []; this.smokeFx = [];
     this.itemObj = null;
   }
 
@@ -315,6 +333,65 @@ export class Renderer {
         this.itemObj.position.set(p.x, this.tileTop(it.x, it.y), p.z); this.itemObj.scale.setScalar(1); this.itemObj.visible = true;
       }
     } else if (this.itemObj) { this.itemObj.visible = false; this.itemCarrier = null; }
+  }
+
+  // --------------------------------------------------------------- structures
+  syncStructures(state) {
+    if (!this.structs) this.structs = new Map();
+    const list = state.structures || [];
+    const seen = new Set();
+    for (const s of list) {
+      seen.add(s.id);
+      let sv = this.structs.get(s.id);
+      if (!sv) {
+        const color = s.team >= 0 && state.teams && state.teams[s.team] ? state.teams[s.team].color : '#9aa3ad';
+        const model = buildStructure(s.kind, s.weapons || [], color);
+        sv = { id: 's' + s.id, sid: s.id, model, state: s, wantYaw: 0, free: true, color };
+        model.torso.rotation.y = 0;
+        this.structGroup.add(model.root);
+        this.structs.set(s.id, sv);
+      }
+      sv.state = s;
+      const p = hexWorld(s.x, s.y);
+      sv.model.root.position.set(p.x, this.tileTop(s.x, s.y), p.z);
+      sv.model.root.rotation.y = facingRot(s.f || 0);
+      sv.model.root.visible = !s.dead;
+    }
+    for (const [id, sv] of this.structs) if (!seen.has(id)) { this.structGroup.remove(sv.model.root); this.structs.delete(id); }
+  }
+
+  // Fire and smoke: flickering flames over burning hexes, smoke drifting with the wind
+  setEnvironment(state) {
+    if (!this.envGroup || !this.map) return;
+    this.envGroup.clear();
+    this.fireFx = []; this.smokeFx = [];
+    const { w } = this.map;
+    const windA = state.wind !== undefined ? DIR_ANGLE[state.wind] * Math.PI / 180 : 0;
+    this.windVec = new THREE.Vector3(Math.cos(windA), 0, Math.sin(windA));
+    const mk = (color, normal, opacity) => new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex, color, transparent: true, depthWrite: false, opacity, blending: normal ? THREE.NormalBlending : THREE.AdditiveBlending }));
+    for (const k of Object.keys(state.fire || {}).map(Number)) {
+      const x = k % w, y = Math.floor(k / w);
+      const p = hexWorld(x, y); p.y = this.tileTop(x, y);
+      for (let i = 0; i < (this.quality === 'low' ? 3 : 6); i++) {
+        const sp = mk(i % 3 === 0 ? '#ffd04a' : '#ff6a1a', false, 0.9);
+        const a = Math.random() * Math.PI * 2, r = Math.random() * 0.55;
+        sp.position.set(p.x + Math.cos(a) * r, p.y + 0.25, p.z + Math.sin(a) * r);
+        this.envGroup.add(sp);
+        this.fireFx.push({ sp, base: sp.position.clone(), ph: Math.random() * 10, size: 0.5 + Math.random() * 0.5 });
+      }
+      const glow = mk('#ff7a2a', false, 0.35); glow.position.set(p.x, p.y + 0.4, p.z); glow.scale.setScalar(2.4); this.envGroup.add(glow);
+      this.fireFx.push({ sp: glow, base: glow.position.clone(), ph: 0, size: 2.4, glow: true });
+    }
+    for (const [k, lvl] of Object.entries(state.smoke || {})) {
+      const i = Number(k), x = i % w, y = Math.floor(i / w);
+      const p = hexWorld(x, y); p.y = this.tileTop(x, y);
+      for (let n = 0; n < (lvl > 1 ? 4 : 2); n++) {
+        const sp = mk(lvl > 1 ? '#3c3a38' : '#7b7a78', true, lvl > 1 ? 0.42 : 0.26);
+        sp.position.set(p.x + (Math.random() - 0.5) * 0.8, p.y + 0.8 + n * 0.5, p.z + (Math.random() - 0.5) * 0.8);
+        this.envGroup.add(sp);
+        this.smokeFx.push({ sp, base: sp.position.clone(), ph: Math.random() * 10, size: 1.6 + Math.random() * 0.8, lvl });
+      }
+    }
   }
 
   placeMech(v, m) {
@@ -623,6 +700,15 @@ export class Renderer {
       const v = [...this.mechs.values()].find((q) => q.model.root === o);
       if (v) return { x: v.state.x, y: v.state.y, mech: v.id };
     }
+    if (this.structs && this.structs.size) {
+      const sObjs = [...this.structs.values()].filter((sv) => sv.model.root.visible).map((sv) => sv.model.root);
+      const sh = this.raycaster.intersectObjects(sObjs, true)[0];
+      if (sh) {
+        let o = sh.object; while (o && !sObjs.includes(o)) o = o.parent;
+        const sv = [...this.structs.values()].find((q) => q.model.root === o);
+        if (sv) return { x: sv.state.x, y: sv.state.y, structure: sv.sid };
+      }
+    }
     const hit = this.raycaster.intersectObject(this.terrain, false)[0];
     if (!hit) return null;
     const px = hit.point.x, pz = hit.point.z - (hit.face && hit.face.normal.y < 0.5 ? 0 : 0);
@@ -736,6 +822,30 @@ export class Renderer {
   }
 
   frame(dt) {
+    if (this.fireFx) for (const f of this.fireFx) {
+      const t = this.time * (f.glow ? 3 : 7) + f.ph;
+      if (f.glow) { f.sp.material.opacity = 0.25 + Math.sin(t) * 0.08 + Math.random() * 0.05; continue; }
+      const k = (t % 3) / 3;
+      f.sp.position.set(f.base.x, f.base.y + k * 0.9, f.base.z);
+      f.sp.scale.setScalar(f.size * (1 - k * 0.6) * (0.85 + Math.random() * 0.3));
+      f.sp.material.opacity = 0.95 * (1 - k);
+    }
+    if (this.smokeFx) for (const f of this.smokeFx) {
+      const k = ((this.time * 0.18 + f.ph) % 1);
+      f.sp.position.copy(f.base).addScaledVector(this.windVec || new THREE.Vector3(), k * 1.2); f.sp.position.y += k * 1.4;
+      f.sp.scale.setScalar(f.size * (0.8 + k * 0.9));
+      f.sp.material.opacity = (f.lvl > 1 ? 0.45 : 0.28) * Math.sin(k * Math.PI);
+    }
+    if (this.structs) for (const sv of this.structs.values()) {
+      const s = sv.state;
+      if (!s || s.dead) continue;
+      tickWeaponAnims(sv.model, dt, this.time);
+      sv.model.torso.rotation.y += (sv.wantYaw - sv.model.torso.rotation.y) * Math.min(1, dt * 4);
+      if (s.cf < s.cfMax / 2 && this.quality !== 'low' && Math.random() < dt * 3) {
+        const p = sv.model.root.position.clone(); p.y += sv.model.height * 0.8;
+        this.spawn(p, { color: '#4a4a4a', size: 0.3, speed: 0.25, rise: 0.9, life: 2, normal: true, opacity: 0.5, grow: 3 });
+      }
+    }
     if (this.marks) for (let i = this.marks.length - 1; i >= 0; i--) {
       const o = this.marks[i]; o.age += dt;
       o.m.material.opacity = 0.6 * Math.max(0, 1 - o.age / 14);
@@ -790,9 +900,15 @@ export class Renderer {
   // --------------------------------------------------------------- event animation
   play(events, state, onEvent) {
     this.pendingAnims++;
-    this.queue = this.queue.then(() => this.runEvents(events, state, onEvent)).catch((e) => console.error(e)).finally(() => {
+    const gen = this.gen;
+    // a new battlefield (another battle, the editor) makes queued animations stale
+    this.queue = this.queue.then(() => (this.gen === gen ? this.runEvents(events, state, onEvent) : null)).catch((e) => console.error(e)).finally(() => {
       this.pendingAnims--;
+      if (this.gen !== gen) return;
+      if (this.terrainDirty) { this.terrainDirty = false; this.updateTerrain(state.map); }
       this.syncMechs(state);
+      this.syncStructures(state);
+      this.setEnvironment(state);
     });
     return this.queue;
   }
@@ -821,8 +937,30 @@ export class Renderer {
       switch (e.k) {
         case 'activate': if (v) { this.framed = null; this.restoreZoom(); this.focusMech(e.id); } break;
         case 'move': if (v) await this.animMove(v, e, sp); break;
+        case 'sshot': {
+          const sv = this.structs && this.structs.get(e.sid), tv = this.mechs.get(e.target);
+          if (!sv || !tv) break;
+          this.unfog(tv, state.mechs[e.target]);
+          if (!this.onScreen(e.target)) { this.focusHex(sv.state.x, sv.state.y); await sleep(250 / sp); }
+          await this.animShot(sv, tv, e, state, sp);
+          break;
+        }
+        case 'sgone': {
+          const sv = this.structs && this.structs.get(e.sid);
+          if (sv) { const p = sv.model.root.position.clone(); p.y += sv.model.height * 0.5; this.explosion(p, 2); sfx('boom', { size: 1.5, pan: this.panOf(p) }); sv.model.root.visible = false; this.terrainDirty = true; await sleep(450 / sp); }
+          break;
+        }
+        case 'terrain': this.terrainDirty = true; break;
+        case 'fire': { const p = hexWorld(e.x, e.y); p.y = this.tileTop(e.x, e.y) + 0.3; this.spawn(p, { n: 16, color: '#ff7a1a', size: 0.5, speed: 1.2, rise: 1.2, life: 0.9 }); sfx('flamer', { pan: this.panOf(p) }); break; }
         case 'shot': case 'melee': {
           if (!v) break;
+          if (e.starget !== undefined) {
+            const tv = this.structs && this.structs.get(e.starget);
+            if (!tv) break;
+            if (!this.onScreen(e.id)) { this.focusHex(tv.state.x, tv.state.y); await sleep(250 / sp); }
+            await this.animShot(v, tv, e, state, sp);
+            break;
+          }
           this.unfog(v, state.mechs[e.id]); this.unfog(this.mechs.get(e.target), state.mechs[e.target]);
           const key = e.id + ':' + e.target;
           if (this.framed !== key || !this.onScreen(e.id) || !this.onScreen(e.target)) { this.frameMechs(e.id, e.target); await this.settleFraming(e.id, e.target); }
@@ -967,7 +1105,7 @@ export class Renderer {
     const world = Math.atan2(b.x - a.x, b.z - a.z);
     let rel = world - v.model.root.rotation.y;
     rel = ((rel + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    v.wantYaw = Math.max(-1.1, Math.min(1.1, rel));
+    v.wantYaw = v.free ? rel : Math.max(-1.1, Math.min(1.1, rel));
   }
 
   async animShot(v, t, e, state, sp) {
@@ -975,9 +1113,10 @@ export class Renderer {
     this.aimAt(v, t);
     v.model.torso.rotation.y = v.wantYaw;
     const W = WEAPONS[e.wt];
-    const w = state.mechs[e.id].weapons[e.w];
+    const w = e.k === 'sshot' ? state.structures[e.sid].weapons[e.w] : state.mechs[e.id].weapons[e.w];
     const wm = w && v.model.weaponMounts && v.model.weaponMounts[w.i];
     if (wm) { triggerWeaponAnim(wm); if (wm.anim && wm.anim.charge) await sleep(260 / sp); }
+    if (v.free) await sleep(180 / sp); // turret swings round
     const from = wm ? wm.muzzle.getWorldPosition(new THREE.Vector3()) : this.muzzleWorld(v, w ? w.loc : 2);
     const to = e.hit ? this.bodyPoint(t) : this.bodyPoint(t, 2.2).setY(t.model.root.position.y + Math.random() * 0.4);
     const pan = this.panOf(from);

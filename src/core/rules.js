@@ -1,9 +1,11 @@
 // MechForce rules engine. Pure functions over a JSON-serialisable state object.
 // The same code runs on the host server, in local games, and inside the AI.
 import { MECHS, WEAPONS, MISSIONS, TERRAIN, FRONT_ZONE, REAR_ZONE, TRANSFER, critName, locName,
-  SIDE_COLORS, SIDE_NAMES, PILOT_NAMES, mechByName, bodyOf, legLocs, LEG_ACT, CODE_TRACKS, CODE_CONVERSION } from './data.js';
+  SIDE_COLORS, SIDE_NAMES, PILOT_NAMES, mechByName, bodyOf, legLocs, LEG_ACT, CODE_TRACKS, CODE_CONVERSION,
+  STRUCTS, LOADOUTS, STRUCT_GUNNERY, CLIMATE } from './data.js';
+import { sanitizeMap, addDefences } from './maps.js';
 import { generateMap, deployZone, inMap } from './map.js';
-import { buildTemplate } from './custom.js';
+import { buildTemplate, WSTAT } from './custom.js';
 import { neighbor, distance, relBearing, line, facingToward, turnCost, center } from './hex.js';
 import { nextRand, roll2d6, d6, hashSeed, chance } from './rng.js';
 
@@ -15,13 +17,21 @@ export function createGame(setup) {
   const mission = MISSIONS.find((m) => m.id === setup.mission) || MISSIONS[0];
   const nSides = Math.max(2, Math.min(setup.sides.length, mission.sides[1]));
   const seed = setup.seed ?? Math.floor(Math.random() * 1e9);
-  const map = generateMap(seed, setup.mapSize || 'M', setup.theme || 'temperate');
+  const custom = setup.customMap ? sanitizeMap(setup.customMap) : null;
+  const map = custom ? { ...custom, t: custom.t.slice(), e: custom.e.slice(), s: custom.s.map((d) => ({ ...d })) } : generateMap(seed, setup.mapSize || 'M', setup.theme || 'temperate');
+  if (custom && setup.theme) map.theme = setup.theme;
   const st = {
     v: 1, seed, rng: hashSeed('dice' + seed), mission: mission.id, map, round: 0, over: false, fog: !!setup.fog, seen: {},
+    structures: [], fire: {}, smoke: {}, wind: 0,
     sides: [], teams: [], mechs: [], order: [], turnIdx: 0, act: null, item: null, winner: null, log: [], seq: 0,
   };
   const teamOfSide = assignTeams(setup.sides.slice(0, nSides), mission);
   const nTeams = Math.max(...teamOfSide) + 1;
+  // structures: from the custom map, or a random battlefield's optional defences
+  if (!custom) addDefences(map, seed, nTeams, setup.defences);
+  st.structures = (map.s || []).map((d, i) => makeStructure(i, d, nTeams));
+  delete map.s;
+  st.wind = Math.floor(nextRand(st) * 6);
   for (let t = 0; t < nTeams; t++) st.teams.push({ members: [], name: '', color: '' });
   teamOfSide.forEach((t, s) => st.teams[t].members.push(s));
   let pilotIx = Math.floor(nextRand(st) * PILOT_NAMES.length);
@@ -44,7 +54,7 @@ export function createGame(setup) {
     const team = teamOfSide[s];
     const mates = st.teams[team].members;
     const zoneIdx = team;
-    let zone = deployZone(map, zoneIdx, nTeams);
+    let zone = deployZone(map, zoneIdx, nTeams).filter((p) => !structureAt(st, p.x, p.y));
     if (mates.length > 1) {
       const k = mates.indexOf(s), n = mates.length;
       const byAxis = zone.slice().sort((a, b) => (zoneIdx < 2 ? a.y - b.y || a.x - b.x : a.x - b.x || a.y - b.y));
@@ -79,7 +89,7 @@ export function createGame(setup) {
       const cands = [];
       for (let y = 1; y < h - 1; y++) for (let x = 0; x < w; x++) {
         const t = map.t[y * w + x];
-        if (t === 5) continue;
+        if (t === 5 || structureAt(st, x, y)) continue;
         const ok = mission.itemZone === 'east' ? x >= Math.floor(w * 0.6) && x <= w - 4
           : mission.itemZone === 'eastish' ? x >= Math.floor(w * 0.58) && x <= Math.floor(w * 0.72) : Math.abs(x - w / 2) <= 2;
         if (ok) cands.push({ x, y });
@@ -91,6 +101,212 @@ export function createGame(setup) {
   startRound(st, []);
   updateSighting(st);
   return st;
+}
+
+// ---------------------------------------------------------------- structures
+// Gun emplacements and bunkers belong to a team (the deployment zone they were built in)
+// and fire automatically at the end of every round. Buildings and walls are cover and
+// obstacles. All of them block movement and line of sight until destroyed, leaving rubble.
+export function makeStructure(id, d, nTeams) {
+  const K = STRUCTS[d.k];
+  const team = d.team >= 0 && d.team < nTeams ? d.team : -1;
+  const weapons = [];
+  for (const l of d.load || []) for (const t of (LOADOUTS[l] || { w: [] }).w) {
+    const S = WSTAT[t];
+    weapons.push({ t, heat: 0, dmg: S.dmg, rng: S.rng, minr: S.minr, slots: S.slots, ammo: WEAPONS[t].kind === 'e' ? -1 : S.ammo * 2, loc: -1, ok: true, i: weapons.length });
+  }
+  return { id, kind: d.k, x: d.x, y: d.y, f: d.f || 0, team: K.slots ? team : -1, cf: K.cf, cfMax: K.cf, h: K.h, hard: K.hard, load: (d.load || []).slice(), weapons, dead: false };
+}
+export const structureAt = (st, x, y) => (st.structures || []).find((s) => !s.dead && s.x === x && s.y === y);
+const structShooter = (s) => ({ id: -1000 - s.id, x: s.x, y: s.y, f: s.f, team: s.team, side: s.team, pilot: { gun: STRUCT_GUNNERY, pil: 5, ko: false },
+  heat: 0, sensorHits: 0, prone: false, dead: s.dead, exited: false, body: 'biped', actu: [], lastMove: { mode: 'stand', hexes: 0 }, structure: true });
+const structTarget = (s) => ({ id: -1000 - s.id, sid: s.id, x: s.x, y: s.y, f: 0, team: s.team, side: s.team, dead: s.dead, exited: false, prone: false,
+  shutdown: true, pilot: { ko: false, hits: 0 }, lastMove: { mode: 'stand', hexes: 0 }, structure: true });
+// To-hit for a mech shooting at a structure: an immobile target (-4)
+export function toHitStructure(st, att, s, w, opts = {}) { return toHit(st, att, structTarget(s), w, opts); }
+function damageStructure(st, s, dmg, ev, by) {
+  const d = s.hard ? Math.ceil(dmg / 2) : dmg;
+  s.cf = Math.max(0, s.cf - d);
+  if (by && by.stats) by.stats.dmg += d;
+  if (s.cf <= 0 && !s.dead) destroyStructure(st, s, ev, by);
+  return d;
+}
+function destroyStructure(st, s, ev, by) {
+  s.dead = true;
+  const i = s.y * st.map.w + s.x;
+  if (st.map.t[i] < 4) st.map.t[i] = 3; // rubble
+  delete st.fire[i];
+  ev.push({ k: 'sgone', sid: s.id, x: s.x, y: s.y });
+  log(st, ev, `${STRUCTS[s.kind].name} destroyed${by && by.design ? ' by ' + by.design : ''}!`, { tone: 'kill', side: s.team >= 0 ? st.teams[s.team]?.members[0] : undefined });
+}
+function fireAtStructure(st, m, s, weapons, ev) {
+  m.reveal = { r: st.round, t: s.team };
+  let volley = 0, nh = 0;
+  for (const w of weapons) {
+    if (s.dead) break;
+    const th = toHitStructure(st, m, s, w);
+    if (!th.ok) continue;
+    const W = WEAPONS[w.t];
+    st.act.heatGen += w.heat;
+    if (w.ammo > 0) w.ammo--;
+    m.stats.shots++;
+    const r = roll2d6(st);
+    const hit = r >= th.tn;
+    const shot = { k: 'shot', id: m.id, target: -1, starget: s.id, w: w.i, wt: w.t, tn: th.tn, roll: r, hit, hits: [] };
+    ev.push(shot);
+    hotGun(st, w, s.x, s.y, hit, ev);
+    if (!hit) continue;
+    m.stats.hits++; nh++;
+    const n = W.kind === 'm' ? clusterHits(st, W.n) : 1;
+    if (W.kind === 'm') shot.missiles = n;
+    const dmg = damageStructure(st, s, n * w.dmg, ev, m);
+    shot.hits.push({ dmg });
+    volley += dmg;
+  }
+  log(st, ev, `${m.design} fires at the ${STRUCTS[s.kind].name.toLowerCase()}: ${nh} hit, ${volley} damage${s.dead ? '' : ` (${s.cf}/${s.cfMax} left)`}.`, { id: m.id, side: m.side, tone: volley ? 'hit' : 'miss' });
+}
+
+// End of round: automated defences pick the most valuable target they can hurt. They
+// prefer damaged mechs and objective carriers, stay out of their minimum range, and save
+// their last rounds of ammunition for good shots.
+export function defenceTargets(st, s) {
+  if (s.dead || s.team < 0) return [];
+  const shooter = structShooter(s);
+  const out = [];
+  for (const m of st.mechs) {
+    if (!operational(m) || (m.team ?? m.side) === s.team) continue;
+    const opts = s.weapons.map((w) => ({ w, th: toHit(st, shooter, m, w) })).filter((o) => o.th.ok && o.th.p > 0.03);
+    if (!opts.length) continue;
+    const ed = opts.reduce((a, o) => a + expectedDamage(o.w, o.th.p), 0);
+    const frac = totalArmor(m) / maxArmor(m);
+    let val = ed * (1.4 - frac * 0.6) * (1 + 0.04 * Math.max(0, 8 - opts[0].th.dist));
+    if (st.item && st.item.carrier === m.id) val *= 1.6;
+    if (totalArmor(m) < ed * 2.5) val *= 1.4;
+    out.push({ m, opts, val, ed });
+  }
+  return out.sort((a, b) => b.val - a.val);
+}
+function defencesFire(st, ev) {
+  const armed = (st.structures || []).filter((s) => !s.dead && s.team >= 0 && s.weapons.some((w) => w.ok && w.ammo !== 0));
+  let announced = false;
+  for (const s of armed) {
+    const best = defenceTargets(st, s)[0];
+    if (!best) continue;
+    if (!announced) { ev.push({ k: 'defences' }); log(st, ev, 'Emplacements open fire!', { tone: 'round' }); announced = true; }
+    const tgt = best.m;
+    const shooter = structShooter(s);
+    const dir = attackDirection(st, s.x, s.y, tgt);
+    let volley = 0, nh = 0;
+    for (const { w, th } of best.opts) {
+      if (tgt.dead) break;
+      if (w.ammo > 0 && w.ammo <= 4 && th.p < 0.3) continue; // hold the last rounds for a better shot
+      if (w.ammo > 0) w.ammo--;
+      const r = roll2d6(st);
+      const hit = r >= th.tn;
+      const shot = { k: 'sshot', sid: s.id, target: tgt.id, w: w.i, wt: w.t, tn: th.tn, roll: r, hit, hits: [] };
+      ev.push(shot);
+      hotGun(st, w, tgt.x, tgt.y, hit, ev);
+      if (!hit) continue;
+      nh++;
+      volley += landHits(st, w, tgt, dir, shot, ev, null);
+    }
+    void shooter;
+    log(st, ev, `${STRUCTS[s.kind].name} fires at ${tgt.design}: ${nh} hit, ${volley} damage.`, { id: tgt.id, side: tgt.side, tone: volley ? 'hit' : 'miss' });
+    if (volley >= 20 && !tgt.dead) pilotingCheck(st, tgt, 1, 'heavy damage', ev);
+    if (tgt.dead) checkVictory(st, ev);
+    if (st.over) return;
+  }
+}
+
+// ---------------------------------------------------------------- terrain: fire, smoke, water, magma, climate
+// Total Warfare / Tactical Operations fire rules, simplified: woods (and buildings) can be
+// set alight by flamers and plasma, by stray laser shots, and by mechs blowing up in them.
+// Fire spreads downwind (9+ on 2D6) and to either side of the wind (11+), throws smoke
+// downwind, and burns heavy woods down to light woods and then to bare rough ground. A mech
+// standing in a burning hex takes +5 heat. Smoke blocks sight like woods.
+const ignitable = (st, x, y) => { const t = tileOf(st, x, y); const s = structureAt(st, x, y); return t === 1 || t === 2 || (s && STRUCTS[s.kind].burns); };
+export const isBurning = (st, x, y) => !!(st.fire && st.fire[y * st.map.w + x]);
+export const smokeAt = (st, x, y) => (st.smoke && st.smoke[y * st.map.w + x]) || 0;
+const magma = (st) => st.map.theme === 'volcanic';
+function tryIgnite(st, x, y, tn, ev, why) {
+  if (!inMap(st.map, x, y) || isBurning(st, x, y) || !ignitable(st, x, y)) return false;
+  const r = roll2d6(st);
+  if (r < tn) return false;
+  st.fire[y * st.map.w + x] = { age: 0 };
+  ev.push({ k: 'fire', x, y });
+  log(st, ev, `${why} sets the ${structureAt(st, x, y) ? 'building' : tileOf(st, x, y) === 2 ? 'heavy woods' : 'woods'} on fire!`, { tone: 'crit' });
+  return true;
+}
+// Flamers ignite on 5+ and plasma on 7+ whether they hit or not; a missed laser can start a fire on 11+
+function hotGun(st, w, x, y, hit, ev) {
+  const W = WEAPONS[w.t];
+  if (W.fx === 'flamer') tryIgnite(st, x, y, 5, ev, 'Flamer fire');
+  else if (W.fx === 'plasma') tryIgnite(st, x, y, hit ? 7 : 9, ev, 'Plasma');
+  else if (W.kind === 'e' && !hit) tryIgnite(st, x, y, 11, ev, 'A stray laser shot');
+}
+const neighbors6 = (x, y) => [0, 1, 2, 3, 4, 5].map((d) => neighbor(x, y, d));
+function environmentPhase(st, ev) {
+  const { w } = st.map;
+  // the wind can veer
+  const wr = roll2d6(st);
+  if (wr === 2 || wr === 12) { st.wind = (st.wind + (wr === 2 ? 5 : 1)) % 6; ev.push({ k: 'wind', dir: st.wind }); log(st, ev, 'The wind shifts.', { tone: 'info' }); }
+  const burning = Object.keys(st.fire).map(Number);
+  // spread
+  for (const i of burning) {
+    const f = st.fire[i]; if (!f) continue;
+    f.age++;
+    const x = i % w, y = Math.floor(i / w);
+    tryIgnite(st, ...xy(neighbor(x, y, st.wind)), 9, ev, 'Wind-blown fire');
+    tryIgnite(st, ...xy(neighbor(x, y, st.wind + 1)), 11, ev, 'Spreading fire');
+    tryIgnite(st, ...xy(neighbor(x, y, st.wind + 5)), 11, ev, 'Spreading fire');
+  }
+  // burn down
+  for (const i of burning) {
+    const f = st.fire[i]; if (!f) continue;
+    const x = i % w, y = Math.floor(i / w);
+    const s = structureAt(st, x, y);
+    if (s) { if (!s.dead) { damageStructure(st, s, d6(st) + d6(st), ev, null); ev.push({ k: 'sburn', sid: s.id }); } if (s.dead) delete st.fire[i]; continue; }
+    if (f.age >= 3) {
+      const t = st.map.t[i];
+      if (t === 2) { st.map.t[i] = 1; f.age = 1; ev.push({ k: 'terrain', x, y, t: 1 }); }
+      else { st.map.t[i] = 3; delete st.fire[i]; ev.push({ k: 'terrain', x, y, t: 3 }); log(st, ev, 'A fire burns itself out, leaving scorched ground.', { tone: 'info' }); }
+    } else if (!ignitable(st, x, y)) delete st.fire[i];
+  }
+  // smoke: thick over the flames, thinner downwind
+  st.smoke = {};
+  for (const i of Object.keys(st.fire).map(Number)) {
+    const x = i % w, y = Math.floor(i / w);
+    st.smoke[i] = 2;
+    for (const d of [st.wind, st.wind + 1, st.wind + 5]) {
+      const n = neighbor(x, y, d);
+      if (inMap(st.map, n.x, n.y)) { const k = n.y * w + n.x; st.smoke[k] = Math.max(st.smoke[k] || 0, 1); }
+    }
+  }
+}
+const xy = (p) => [p.x, p.y];
+// Heat from the surroundings, added at the end of an activation
+export function envHeat(st, m) {
+  let h = (CLIMATE[st.map.theme] || CLIMATE.temperate).heat;
+  if (isBurning(st, m.x, m.y)) h += 5;
+  const t = tileOf(st, m.x, m.y);
+  if (magma(st) && (t === 4 || t === 5)) h += t === 5 ? 10 : 5;
+  return h;
+}
+export function envHeatParts(st, m) {
+  const out = [];
+  const c = (CLIMATE[st.map.theme] || CLIMATE.temperate).heat;
+  if (c) out.push([c > 0 ? 'Hot climate' : 'Cold climate', c]);
+  if (isBurning(st, m.x, m.y)) out.push(['Standing in fire', 5]);
+  const t = tileOf(st, m.x, m.y);
+  if (magma(st) && (t === 4 || t === 5)) out.push([t === 5 ? 'Liquid magma' : 'Magma crust', t === 5 ? 10 : 5]);
+  return out;
+}
+// Liquid magma burns the legs (2D6 each; everything if the mech is lying in it)
+function magmaBurn(st, m, ev) {
+  if (!magma(st) || tileOf(st, m.x, m.y) !== 5 || m.dead) return;
+  log(st, ev, `${m.design} is burned by liquid magma!`, { id: m.id, side: m.side, tone: 'bad' });
+  const locs = m.prone ? m.locGone.map((_, l) => l) : legLocs(bodyOf(m));
+  for (const l of locs) if (!m.dead && !m.locGone[l]) applyDamage(st, m, l, false, d6(st) + d6(st), ev, null);
 }
 
 // ---------------------------------------------------------------- fog of war
@@ -266,7 +482,7 @@ export function availMP(m, mode) {
 export const moveKind = (mode) => (mode === 'track' || mode === 'cruise' ? 'walk' : mode === 'flank' ? 'run' : mode);
 export function dissipation(st, m) {
   const t = tileOf(st, m.x, m.y);
-  const depth = (TERRAIN[t] && TERRAIN[t].depth) || 0;
+  const depth = st.map.theme === 'volcanic' ? 0 : (TERRAIN[t] && TERRAIN[t].depth) || 0;
   return Math.max(0, m.hs - m.hsLost) + depth * 2;
 }
 export function heatToHit(h) { return h >= 24 ? 4 : h >= 17 ? 3 : h >= 13 ? 2 : h >= 8 ? 1 : 0; }
@@ -287,6 +503,7 @@ function enterCost(st, m, fx, fy, tx, ty, mode) {
   }
   const o = mechAt(st, tx, ty);
   if (o && isEnemy(o, m)) return -1;
+  if (st.structures && structureAt(st, tx, ty)) return -1;
   return TERRAIN[t].cost + Math.abs(de) * (TRACKED[mode] ? 2 : 1);
 }
 
@@ -308,6 +525,7 @@ export function computeReach(st, m, mode, opts = {}) {
       const d = distance(m.x, m.y, x, y);
       if (d === 0 || d > mp) continue;
       if (Math.abs(elevOf(st, x, y) - elevOf(st, m.x, m.y)) > mp) continue;
+      if (st.structures && structureAt(st, x, y)) continue;
       for (let f = 0; f < 6; f++) { const k = (y * w + x) * 6 + f; cost[k] = d; prev[k] = s0; steps[k] = d; }
     }
     cost[s0] = 0;
@@ -376,18 +594,21 @@ export function pathFrom(reach, x, y, f) {
 export function lineOfSight(st, ax, ay, bx, by) {
   const hexes = line(ax, ay, bx, by);
   const ea = elevOf(st, ax, ay) + 1.6, eb = elevOf(st, bx, by) + 1.0;
-  let woods = 0;
+  let woods = 0, smoke = 0;
   const n = hexes.length - 1;
   for (let i = 1; i < n; i++) {
     const hx = hexes[i];
     const lh = ea + (eb - ea) * (i / n);
-    const e = elevOf(st, hx.x, hx.y);
-    if (e >= lh) return { ok: false, woods, block: hx, hexes };
+    const sb = st.structures && structureAt(st, hx.x, hx.y);
+    const e = elevOf(st, hx.x, hx.y) + (sb ? sb.h * 0.9 : 0);
+    if (e >= lh) return { ok: false, woods, smoke, block: hx, hexes };
     const wd = TERRAIN[tileOf(st, hx.x, hx.y)].woods;
     if (wd && e + 1.3 > lh) woods += wd;
-    if (woods >= 3) return { ok: false, woods, block: hx, hexes };
+    const sm = st.smoke ? smokeAt(st, hx.x, hx.y) : 0;
+    if (sm) smoke += sm;
+    if (woods + smoke >= 3) return { ok: false, woods, smoke, block: hx, hexes };
   }
-  return { ok: true, woods, hexes };
+  return { ok: true, woods, smoke, hexes };
 }
 
 export function attackDirection(st, ax, ay, t) {
@@ -401,6 +622,7 @@ export function attackDirection(st, ax, ay, t) {
 export function inArc(att, wloc, tx, ty, pos) {
   const p = pos || att;
   const rel = relBearing(p.x, p.y, p.f, tx, ty);
+  if (wloc === -1) return true; // emplacement turrets turn all the way round
   const arms = bodyOf(att) !== 'quad'; // a quad's front legs fire straight ahead
   if (arms && wloc === 4) return rel >= -120.01 && rel <= 60.01;
   if (arms && wloc === 5) return rel >= -60.01 && rel <= 120.01;
@@ -462,6 +684,7 @@ export function toHit(st, att, tgt, w, opts = {}) {
   if (tgt.prone) add('Target prone', dist <= 1 ? -2 : 1);
   if (tgt.shutdown || tgt.pilot.ko) add('Target immobile', -4);
   add('Woods', los.woods + TERRAIN[tileOf(st, tgt.x, tgt.y)].woods);
+  add('Smoke', (los.smoke || 0) + (st.smoke ? smokeAt(st, tgt.x, tgt.y) : 0));
   if (TERRAIN[tileOf(st, tgt.x, tgt.y)].depth) add('Partial cover', 1);
   add('Heat', heatToHit(att.heat));
   add('Sensors damaged', att.sensorHits * 2);
@@ -526,6 +749,7 @@ function destroyMech(st, m, ev, by, why) {
   if (m.dead) return;
   m.dead = true;
   ev.push({ k: 'destroyed', id: m.id, by: by ? by.id : -1 });
+  if (!m.exited) tryIgnite(st, m.x, m.y, 8, ev, `The burning wreck of the ${m.design}`);
   log(st, ev, `${m.design} (${m.pilot.name}) is DESTROYED${why ? ' — ' + why : ''}!`, { tone: 'kill', id: m.id, side: m.side });
   if (by && isEnemy(by, m)) by.stats.kills++;
   dropItem(st, m, ev);
@@ -614,6 +838,7 @@ function ammoExplosion(st, m, w, ev, by) {
   const loc = w.aloc >= 0 ? w.aloc : w.loc;
   ev.push({ k: 'boom', id: m.id, loc, dmg });
   log(st, ev, `AMMO EXPLOSION! ${m.design}'s ${W.short} ammo cooks off for ${dmg} damage!`, { tone: 'crit', id: m.id, side: m.side });
+  tryIgnite(st, m.x, m.y, 8, ev, 'The explosion');
   applyDamage(st, m, loc, false, dmg, ev, by, { internalOnly: true });
   pilotHit(st, m, 2, ev, 'ammo explosion');
 }
@@ -809,7 +1034,7 @@ function startRound(st, ev) {
 }
 
 function coolDown(st, m, ev) {
-  m.heat = Math.max(0, m.heat - dissipation(st, m) + m.engineHits * 5);
+  m.heat = Math.max(0, m.heat - dissipation(st, m) + m.engineHits * 5 + envHeat(st, m));
   ev.push({ k: 'heat', id: m.id, heat: m.heat });
 }
 function shutdownTN(h) { return h >= 30 ? 99 : h >= 26 ? 10 : h >= 22 ? 8 : h >= 18 ? 6 : h >= 14 ? 4 : 0; }
@@ -831,6 +1056,13 @@ function nextTurn(st, ev, fromStart) {
       return;
     }
   }
+  if (st.round > 0) {
+    defencesFire(st, ev);
+    if (st.over) return;
+    environmentPhase(st, ev);
+    checkVictory(st, ev);
+    if (st.over) return;
+  }
   startRound(st, ev);
 }
 
@@ -840,7 +1072,8 @@ function endActivation(st, m, ev) {
   m.activated = true;
   if (operational(m)) {
     const before = m.heat;
-    const gen = (act ? act.heatGen : 0) + m.engineHits * 5;
+    const gen = (act ? act.heatGen : 0) + m.engineHits * 5 + envHeat(st, m);
+    magmaBurn(st, m, ev);
     m.heat = Math.max(0, Math.min(40, m.heat + gen - dissipation(st, m)));
     ev.push({ k: 'heat', id: m.id, heat: m.heat, gen, from: before });
     if (m.heat >= 14 && !m.shutdown) {
@@ -925,6 +1158,14 @@ export function applyCommand(st, side, cmd) {
       act.phase = 'attack';
       ev.push({ k: 'move', id: m.id, path, mode: realMode, vmode: m.vmode });
       if (wasProne) log(st, ev, `${m.design} stands up.`, { id: m.id, side: m.side });
+      if (realMode !== 'jump' && !magma(st)) {
+        for (let i = 1; i < path.length && !m.prone && !m.dead; i++) {
+          const a = path[i - 1], b = path[i];
+          if (a.x === b.x && a.y === b.y) continue;
+          const d = TERRAIN[tileOf(st, b.x, b.y)].depth || 0;
+          if (d && !(TERRAIN[tileOf(st, a.x, a.y)].depth >= d)) pilotingCheck(st, m, d === 1 ? -1 : 0, 'entering water', ev);
+        }
+      }
       if (m.mot === 'tracks' && mode !== 'jump') {
         const nm = mode === 'track' ? 'vehicle' : 'mech';
         if (nm !== m.vmode) { m.vmode = nm; ev.push({ k: 'mode', id: m.id, vmode: nm }); }
@@ -941,6 +1182,17 @@ export function applyCommand(st, side, cmd) {
     }
     case 'attack': {
       if (act.phase === 'done') return fail('Already attacked');
+      if (cmd.structure !== undefined) {
+        const s = (st.structures || [])[cmd.structure];
+        if (!s || s.dead || s.team === m.team) return fail('Bad target');
+        if (act.phase === 'move') act.phase = 'attack';
+        const usable = (cmd.weapons || []).map((i) => m.weapons[i]).filter((w) => w && toHitStructure(st, m, s, w).ok);
+        if (!usable.length) return fail('No weapon can fire');
+        fireAtStructure(st, m, s, usable, ev);
+        act.phase = 'done';
+        endActivation(st, m, ev);
+        break;
+      }
       const tgt = st.mechs[cmd.target];
       if (!tgt) return fail('Bad target');
       if (act.phase === 'move') { act.phase = 'attack'; }
@@ -983,6 +1235,41 @@ function clusterHits(st, n) {
   return (T[n] || T[6])[r - 2];
 }
 
+// Damage from one weapon that hit (missile clusters, LRM 5-point groups, head hits, flamer heat)
+function landHits(st, w, tgt, dir, shot, ev, by) {
+  const W = WEAPONS[w.t];
+  let volley = 0;
+  if (W.kind === 'm') {
+    const n = clusterHits(st, W.n);
+    shot.missiles = n;
+    if (W.lrm) {
+      let left = n * w.dmg;
+      while (left > 0 && !tgt.dead) {
+        const d = Math.min(5, left); left -= d;
+        const hl = rollLocation(st, dir, tgt);
+        shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: d });
+        applyDamage(st, tgt, hl.loc, hl.rear, d, ev, by, { tac: hl.tac });
+        volley += d;
+      }
+    } else {
+      for (let i = 0; i < n && !tgt.dead; i++) {
+        const hl = rollLocation(st, dir, tgt);
+        shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: w.dmg });
+        applyDamage(st, tgt, hl.loc, hl.rear, w.dmg, ev, by, { tac: hl.tac });
+        volley += w.dmg;
+      }
+    }
+  } else {
+    const hl = rollLocation(st, dir, tgt);
+    shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: w.dmg });
+    if (hl.loc === 0 && !tgt.dead) pilotHit(st, tgt, 1, ev, 'head hit');
+    applyDamage(st, tgt, hl.loc, hl.rear, w.dmg, ev, by, { tac: hl.tac });
+    volley += w.dmg;
+    if (w.t === 15) tgt.heat = Math.min(40, tgt.heat + 2);
+  }
+  return volley;
+}
+
 function fireWeapons(st, m, tgt, weapons, ev) {
   const dir = attackDirection(st, m.x, m.y, tgt);
   m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
@@ -1001,36 +1288,10 @@ function fireWeapons(st, m, tgt, weapons, ev) {
     const hit = r >= th.tn;
     const shot = { k: 'shot', id: m.id, target: tgt.id, w: w.i, wt: w.t, tn: th.tn, roll: r, hit, hits: [] };
     ev.push(shot);
+    hotGun(st, w, tgt.x, tgt.y, hit, ev);
     if (!hit) { continue; }
     m.stats.hits++;
-    if (W.kind === 'm') {
-      const n = clusterHits(st, W.n);
-      shot.missiles = n;
-      if (W.lrm) {
-        let left = n * w.dmg;
-        while (left > 0) {
-          const d = Math.min(5, left); left -= d;
-          const hl = rollLocation(st, dir, tgt);
-          shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: d });
-          applyDamage(st, tgt, hl.loc, hl.rear, d, ev, m, { tac: hl.tac });
-          volley += d;
-        }
-      } else {
-        for (let i = 0; i < n; i++) {
-          const hl = rollLocation(st, dir, tgt);
-          shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: w.dmg });
-          applyDamage(st, tgt, hl.loc, hl.rear, w.dmg, ev, m, { tac: hl.tac });
-          volley += w.dmg;
-        }
-      }
-    } else {
-      const hl = rollLocation(st, dir, tgt);
-      shot.hits.push({ loc: hl.loc, rear: hl.rear, dmg: w.dmg });
-      if (hl.loc === 0 && !tgt.dead) pilotHit(st, tgt, 1, ev, 'head hit');
-      applyDamage(st, tgt, hl.loc, hl.rear, w.dmg, ev, m, { tac: hl.tac });
-      volley += w.dmg;
-      if (w.t === 15) tgt.heat = Math.min(40, tgt.heat + 2);
-    }
+    volley += landHits(st, w, tgt, dir, shot, ev, m);
   }
   const nh = ev.filter((e) => e.k === 'shot' && e.hit).length;
   log(st, ev, `${m.design} fires ${weapons.length} weapon${weapons.length > 1 ? 's' : ''} at ${tgt.design}: ${nh} hit, ${volley} damage.`, { id: m.id, side: m.side, tone: volley ? 'hit' : 'miss' });

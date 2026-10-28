@@ -533,3 +533,72 @@ export function buildItem(kind) {
   beam.position.y = 3; g.add(beam);
   return g;
 }
+
+// --------------------------------------------------------------------------- structures
+// Gun emplacements and bunkers carry real weapon models in a turret that swivels to aim;
+// buildings and walls are cover. `torso` is the part that turns, so the battle renderer can
+// aim and fire a structure exactly like a mech.
+const concreteMat = new THREE.MeshStandardMaterial({ color: '#80868c', roughness: 0.92, metalness: 0.05 });
+const concreteDark = new THREE.MeshStandardMaterial({ color: '#5b6066', roughness: 0.95, metalness: 0.05 });
+const sandMat = new THREE.MeshStandardMaterial({ color: '#8f7d5c', roughness: 1 });
+const windowMat = new THREE.MeshStandardMaterial({ color: '#1b2a33', emissive: new THREE.Color('#ffd58a'), emissiveIntensity: 0.6, roughness: 0.3 });
+export function buildStructure(kind, weapons, colorHex) {
+  const mats = mechMaterials(colorHex || '#9aa3ad');
+  const root = new THREE.Group();
+  const torso = new THREE.Group();
+  const M = (geo, mat, x, y, z, parent = root) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
+  const weaponMounts = {}, muzzles = {};
+  const mountWeapons = (parent, y, z, spread, scale) => {
+    weapons.forEach((w, k) => {
+      const part = weaponPart(w.t, scale, mats);
+      part.g.position.set((k - (weapons.length - 1) / 2) * spread, y, z);
+      parent.add(part.g);
+      weaponMounts[w.i] = { muzzle: part.mz, meshes: [], group: part.g, anim: part.anim };
+      if (!muzzles[-1]) muzzles[-1] = part.mz;
+    });
+  };
+  let height = 1;
+  if (kind === 'turret') {
+    M(cyl(0.62, 0.7, 0.34, 6), concreteMat, 0, 0.17, 0).rotation.y = Math.PI / 6;
+    M(cyl(0.64, 0.64, 0.05, 6), mats.trim, 0, 0.3, 0).rotation.y = Math.PI / 6;
+    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; M(box(0.18, 0.12, 0.06), mats.hazard, Math.sin(a) * 0.6, 0.12, Math.cos(a) * 0.6).rotation.y = a; }
+    torso.position.y = 0.34; root.add(torso);
+    M(cyl(0.3, 0.34, 0.12, 12), mats.joint, 0, 0.06, 0, torso);
+    M(plate(0.62, 0.32, 0.66, 0.25), mats.body, 0, 0.28, -0.04, torso);
+    M(plate(0.5, 0.1, 0.4), mats.trim, 0, 0.47, -0.1, torso);
+    M(box(0.2, 0.05, 0.02), mats.glass, 0.18, 0.36, 0.3, torso);
+    mountWeapons(torso, 0.27, 0.22, 0.16, 1.15);
+    height = 0.95;
+  } else if (kind === 'bunker') {
+    M(plate(1.45, 0.42, 1.25, 0.2), concreteMat, 0, 0.21, 0);
+    const glacis = M(plate(1.4, 0.36, 0.5, 0.2), concreteDark, 0, 0.32, 0.44); glacis.rotation.x = -0.5;
+    M(box(0.9, 0.06, 0.04), mats.tube, 0, 0.3, 0.64);
+    for (let k = 0; k < 14; k++) { const a = k / 14 * Math.PI * 2; M(plate(0.24, 0.12, 0.14, 0.4), sandMat, Math.sin(a) * 0.86, 0.06, Math.cos(a) * 0.86).rotation.y = a; }
+    M(box(1.46, 0.04, 0.12), mats.trim, 0, 0.43, -0.3);
+    torso.position.set(0, 0.42, -0.12); root.add(torso);
+    M(cyl(0.34, 0.4, 0.2, 10), concreteDark, 0, 0.1, 0, torso);
+    M(plate(0.56, 0.18, 0.5), mats.body, 0, 0.24, 0, torso);
+    mountWeapons(torso, 0.2, 0.2, 0.18, 1.0);
+    height = 0.85;
+  } else if (kind === 'building') {
+    M(plate(1.3, 1.5, 1.15, 0.06), concreteMat, 0, 0.75, 0);
+    M(box(1.36, 0.08, 1.2), concreteDark, 0, 1.52, 0);
+    for (const fz of [-1, 1]) for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) M(box(0.16, 0.18, 0.02), windowMat, -0.45 + c * 0.3, 0.32 + r * 0.42, fz * 0.585);
+    for (const fx of [-1, 1]) for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) M(box(0.02, 0.18, 0.16), windowMat, fx * 0.66, 0.32 + r * 0.42, -0.35 + c * 0.35);
+    M(cyl(0.012, 0.012, 0.6, 4), mats.chrome, 0.4, 1.85, 0.3);
+    M(box(0.34, 0.2, 0.3), concreteDark, -0.3, 1.66, -0.2);
+    M(box(1.32, 0.06, 0.04), mats.trim, 0, 1.4, 0.58);
+    root.add(torso);
+    height = 1.8;
+  } else { // wall
+    M(plate(1.75, 0.62, 0.38, 0.12), concreteMat, 0, 0.31, 0);
+    for (let k = 0; k < 5; k++) M(box(0.22, 0.14, 0.4), concreteDark, -0.7 + k * 0.35, 0.68, 0);
+    M(box(1.76, 0.05, 0.02), mats.hazard, 0, 0.2, 0.2);
+    root.add(torso);
+    height = 0.75;
+  }
+  mergeStatic(root);
+  for (const wm of Object.values(weaponMounts)) wm.group.traverse((o) => { if (o.isMesh) wm.meshes.push(o); });
+  root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return { root, body: root, torso, head: torso, legs: [], arms: [], muzzles, weaponMounts, jets: [], mats, height, scale: 1, wheels: [], treads: [], vk: 0, vOffset: 0, setVehicle() {}, structure: true };
+}

@@ -19,9 +19,11 @@ import { LocalSession, RemoteSession, wsUrlFor, PeerHostSession, PeerClientSessi
 export const IS_ARTIFACT = typeof __MF_ARTIFACT__ !== 'undefined' && __MF_ARTIFACT__;
 export const PUBLIC_URL = 'https://shrieeiee.github.io/MechForce/';
 import { native, isCapacitor, servedByHost, secureBrowser, platformName, canHost, canQuit, discover } from './platform.js';
-import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mechBV } from '../core/data.js';
+import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mechBV, CLIMATE } from '../core/data.js';
 import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
 import { totalArmor, maxArmor } from '../core/rules.js';
+import { loadMaps } from './mapstore.js';
+import { showEditor } from './editor.js';
 
 // ------------------------------------------------------------------ boot
 const style = document.createElement('style');
@@ -66,6 +68,7 @@ class App {
       if (Math.abs(input.move.x) + Math.abs(input.move.y) + Math.abs(input.cam.x) > 0.3) initAudio();
       if (this.screen === 'battle') this.battle.tick(dt, now);
       else if (this.screen === 'title') this.renderer.cam.yaw += dt * 0.04;
+      else if (this.screenTick) this.screenTick(dt, now);
       this.renderer.frame(dt);
       requestAnimationFrame(loop);
     };
@@ -137,10 +140,12 @@ class App {
       if (e.buttons & 2 && this.rDrag) { this.rDrag.moved += Math.abs(e.movementX) + Math.abs(e.movementY); }
       if (e.buttons & 4 || e.buttons & 2 || (e.buttons & 1 && e.altKey)) { this.renderer.orbit(e.movementX, e.movementY); return; }
       if (this.screen === 'battle' && !this.modal) this.battle.pointer(e, 'move');
+      else if (this.screenPointer && !this.modal) this.screenPointer(e, 'move');
     });
     gl.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch') { touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); this.dragging = touches.size === 1; this.dragMoved = 0; if (touches.size === 2) pinch = null; return; }
       if (e.button === 2) { e.preventDefault(); this.rDrag = { moved: 0 }; gl.setPointerCapture(e.pointerId); }
+      if (e.button === 0 && !e.altKey && this.screenPointer && !this.modal) this.screenPointer(e, 'down');
     });
     const up = (e) => {
       if (e.pointerType === 'touch') {
@@ -148,11 +153,13 @@ class App {
         touches.delete(e.pointerId);
         if (touches.size < 2) pinch = null;
         if (wasSingle && (this.dragMoved || 0) < 12 && this.screen === 'battle' && !this.modal) this.battle.pointer(e, 'click');
+        else if (wasSingle && (this.dragMoved || 0) < 12 && this.screenPointer && !this.modal) this.screenPointer(e, 'click');
         this.dragging = false;
         return;
       }
       if (e.button === 2 && this.rDrag) { const moved = this.rDrag.moved; this.rDrag = null; if (moved < 6) this.onAction('back'); return; }
       if (e.button === 0 && !e.altKey && this.screen === 'battle' && !this.modal) this.battle.pointer(e, 'click');
+      else if (e.button === 0 && this.screenPointer && !this.modal) this.screenPointer(e, 'up');
     };
     gl.addEventListener('pointerup', up);
     gl.addEventListener('pointercancel', (e) => { touches.delete(e.pointerId); pinch = null; });
@@ -176,8 +183,10 @@ class App {
     if (old) old.replaceWith(bar); else container.appendChild(bar);
   }
 
-  setScreen(name, render, onAction, onBack) {
+  setScreen(name, render, onAction, onBack, hooks = {}) {
     this.screen = name;
+    this.screenPointer = hooks.pointer || null;
+    this.screenTick = hooks.tick || null;
     this.renderScreen = render;
     this.screenAction = onAction;
     this.onBack = onBack;
@@ -262,12 +271,12 @@ class App {
     }
   }
 
-  startLocal(kind) {
+  startLocal(kind, extra = {}) {
     this.endSession();
     const sess = new LocalSession(this.settings.name, platformName());
     this.attachSession(sess);
     this.localKind = kind;
-    sess.send({ t: 'settings', settings: { tonnage: this.settings.tonnage } });
+    sess.send({ t: 'settings', settings: { tonnage: this.settings.tonnage, ...extra } });
     if (kind === 'hotseat') sess.send({ t: 'slot', side: 1, ctrl: 'me' });
     // give the player a sensible starter lance
     queueMicrotask(() => sess.send({ t: 'lance', side: 0, lance: autoLance(Math.random(), this.settings.tonnage, 4) }));
@@ -372,6 +381,7 @@ class App {
       { k: 'hotseat', label: 'Hotseat', hint: 'Pass the controller', fn: () => this.startLocal('hotseat') },
       { k: 'bay', label: 'Mech Bay', hint: `${MECHS.length} original designs`, fn: () => this.showBay(null) },
       { k: 'lab', label: 'Mech Lab', hint: 'Design your own mechs', fn: () => this.openLab(null, -1, () => this.showTitle()) },
+      { k: 'editor', label: 'Map Editor', hint: 'Build battlefields and defences', fn: () => showEditor(this, { onExit: () => this.showTitle() }) },
       { k: 'manual', label: 'How to Play', hint: 'Turns, aiming, heat, damage', fn: () => this.showManual() },
       { k: 'settings', label: 'Settings', hint: '', fn: () => this.showSettings(() => this.showTitle()) },
       canQuit ? { k: 'quit', label: 'Quit', hint: '', fn: () => native.quit() } : null,
@@ -411,13 +421,22 @@ class App {
   lobbySettingDefs() {
     const L = this.lobby;
     const mis = MISSIONS.find((m) => m.id === L.settings.mission);
+    const cm = L.settings.customMap;
+    const saved = this.isHost ? loadMaps() : [];
     const defs = [
       { k: 'mission', label: 'Mission', value: mis.name, opts: MISSIONS.map((m) => m.id) },
-      { k: 'mapSize', label: 'Battlefield', value: MAP_SIZES.find((s) => s.id === L.settings.mapSize).name, opts: MAP_SIZES.map((s) => s.id) },
-      { k: 'theme', label: 'Terrain', value: THEMES.find((t) => t.id === L.settings.theme).name, opts: THEMES.map((t) => t.id) },
-      { k: 'tonnage', label: 'Tonnage limit', value: L.settings.tonnage + 't', opts: [100, 120, 140, 160, 180, 200, 240, 280, 320, 360, 400] },
-      { k: 'lanceSize', label: 'Mechs per side', value: String(L.settings.lanceSize), opts: [1, 2, 3, 4] },
+      { k: 'customMap', label: 'Map', value: cm ? cm.name : 'Random', opts: [null, ...saved.map((m) => m.name)], cur: cm ? cm.name : null,
+        tip: '<p><b>Random</b> makes a new battlefield for every battle. Or play a map you made in the <b>Map editor</b> (main menu).</p>' },
     ];
+    if (!cm) defs.push(
+      { k: 'mapSize', label: 'Battlefield', value: MAP_SIZES.find((s) => s.id === L.settings.mapSize).name, opts: MAP_SIZES.map((s) => s.id) },
+      { k: 'theme', label: 'Terrain', value: THEMES.find((t) => t.id === L.settings.theme).name, opts: THEMES.map((t) => t.id), tip: '<p>' + esc(CLIMATE[L.settings.theme]?.text || '') + '</p>' },
+      { k: 'defences', label: 'Defences', value: { none: 'None', light: 'Light', heavy: 'Heavy' }[L.settings.defences || 'none'], opts: ['none', 'light', 'heavy'],
+        tip: '<p>Fortify each side\'s deployment edge. <b>Light</b>: two gun emplacements per side. <b>Heavy</b>: a bunker and three emplacements. They fire on their own at the end of every round, and can be shot down.</p>' });
+    else defs.push({ k: 'mapinfo', label: 'Battlefield', value: `${MAP_SIZES.find((s) => s.id === cm.size).name} · ${THEMES.find((t) => t.id === cm.theme).name}`, opts: [], fixed: true });
+    defs.push(
+      { k: 'tonnage', label: 'Tonnage limit', value: L.settings.tonnage + 't', opts: [100, 120, 140, 160, 180, 200, 240, 280, 320, 360, 400] },
+      { k: 'lanceSize', label: 'Mechs per side', value: String(L.settings.lanceSize), opts: [1, 2, 3, 4] });
     defs.push({ k: 'sides', label: 'Forces (players or AI)', value: String(L.settings.sides), opts: [2, 3, 4] });
     if (mis.id === 'generic') defs.push({ k: 'teamMode', label: 'Teams', value: L.settings.teamMode === 'teams' ? 'Two teams' : 'Free-for-all', opts: ['ffa', 'teams'] });
     defs.push({ k: 'fog', label: 'Fog of war', value: L.settings.fog ? 'On' : 'Off', opts: [false, true],
@@ -427,10 +446,11 @@ class App {
 
   changeSetting(k, dir) {
     const def = this.lobbySettingDefs().find((d) => d.k === k);
-    if (!def || !this.isHost) return;
-    const cur = this.lobby.settings[k];
+    if (!def || !this.isHost || def.fixed || !def.opts.length) return;
+    const cur = def.cur !== undefined ? def.cur : this.lobby.settings[k];
     const i = def.opts.indexOf(cur);
     const next = def.opts[(i + dir + def.opts.length) % def.opts.length];
+    if (k === 'customMap') { this.session.send({ t: 'settings', settings: { customMap: next ? loadMaps().find((m) => m.name === next) : null } }); sfx('ui-move'); return; }
     if (k === 'tonnage') { this.settings.tonnage = next; this.saveSettings(); }
     this.session.send({ t: 'settings', settings: { [k]: next } });
     sfx('ui-move');
@@ -473,11 +493,11 @@ class App {
       </div></div>`);
     const settingsEl = $('.settings', el);
     for (const d of this.lobbySettingDefs()) {
-      const b = html(`<div class="btn nav ${this.isHost ? '' : 'disabled'}" data-key="set-${d.k}" data-setting="${d.k}" ${d.tip ? tipAttr(d.label, d.tip) : ''}>${esc(d.label)}<span class="val ${this.isHost ? 'arrows' : ''}">${esc(d.value)}</span></div>`);
+      const b = html(`<div class="btn nav ${this.isHost ? '' : 'disabled'}" data-key="set-${d.k}" data-setting="${d.k}" ${d.tip ? tipAttr(d.label, d.tip) : ''}>${esc(d.label)}<span class="val ${this.isHost && !d.fixed ? 'arrows' : ''}">${esc(d.value)}</span></div>`);
       b.addEventListener('click', () => this.changeSetting(d.k, 1));
       settingsEl.appendChild(b);
     }
-    if (this.isHost) {
+    if (this.isHost && !L.settings.customMap) {
       const rr = html('<div class="btn nav" data-key="reroll">New map seed<span class="val num">' + esc(String(L.settings.seed).slice(0, 6)) + '</span></div>');
       rr.addEventListener('click', () => this.session.send({ t: 'settings', settings: { seed: Math.random().toString(36).slice(2, 10) } }));
       settingsEl.appendChild(rr);

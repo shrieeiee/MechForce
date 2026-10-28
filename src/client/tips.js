@@ -1,7 +1,7 @@
 // Tooltip engine + the plain-language explanations shown in tooltips and the field manual.
 // Any element with data-tip (HTML) and optional data-tip-title gets a tooltip:
 //   mouse: hover · controller/keyboard: when the element has focus · touch: long-press.
-import { WEAPONS, TERRAIN } from '../core/data.js';
+import { WEAPONS, TERRAIN, STRUCTS, LOADOUTS } from '../core/data.js';
 import { chance } from '../core/rng.js';
 import { esc } from './ui.js';
 import { input } from './input.js';
@@ -300,6 +300,15 @@ export const MANUAL = [
     <p>A faded marker with a <b>?</b> shows where you last saw each enemy and which way it was facing. They won't be there for long.</p>
     <p>Firing gives a mech away: whoever it shot at can see it for the rest of the round. Wrecks stay visible.</p>
     <p>The computer plays by the same rules. Online, each player's device is only sent what their side can see; in hotseat games the view switches with each player's turn. When the battle ends, everything is revealed.</p>` },
+  { k: 'structures', t: 'Defences & buildings', body: `
+    <p><b>Gun emplacements</b> and <b>bunkers</b> belong to a side and fire on their own at the end of every round, at the best target in range and sight (gunnery 4, and they never move: +0 for movement). An emplacement mounts one weapon and turns to face anything; a bunker is hardened (it takes half damage) and mounts two. They run out of ammunition like mechs do.</p>
+    <p><b>Buildings</b> and <b>walls</b> are unarmed cover: they block movement and sight like a hill of their height. Buildings can burn.</p>
+    <p>You can shoot any of them: select it as a target in attack mode. It's immobile (-4 to hit). When its <b>construction factor</b> reaches 0 it collapses into rubble. Turn on <b>Defences</b> in the battle setup to fortify a random map, or place your own in the <b>Map editor</b>.</p>` },
+  { k: 'terrain', t: 'Fire, smoke & climate', body: `
+    <p><b>Fire.</b> Flamers set woods alight easily, plasma weapons sometimes, and a stray laser or an exploding mech can too. Fires spread downwind at the end of each round, burn heavy woods down to light woods and then to rough ground, and set buildings ablaze. Standing in a burning hex adds <b>+5 heat</b>.</p>
+    <p><b>Smoke</b> drifts from fires and blocks sight like woods: +1 or +2 to hit through it.</p>
+    <p><b>Water</b> cools a mech that stands in it (more when deeper), but stepping into it needs a piloting roll. On volcanic worlds the lakes are <b>magma</b>: +5 heat on the crust, +10 and leg damage in liquid magma, and no cooling.</p>
+    <p><b>Climate</b> changes heat every turn: desert +1, volcanic +2, arctic −1.</p>` },
   { k: 'controls', t: 'Controls', body: `
     <table class="tt"><tr><td>Move cursor</td><td>Left stick / d-pad · WASD / arrows · mouse · tap</td></tr>
     <tr><td>Confirm</td><td>A / ✕ · Enter · click · tap again</td></tr>
@@ -313,3 +322,10 @@ export const MANUAL = [
 ];
 
 export { chance };
+
+export function structTip(S) {
+  const K = STRUCTS[S.kind];
+  const guns = S.load && S.load.length ? S.load.map((l) => LOADOUTS[l] ? LOADOUTS[l].name : l).join(' and ') : '';
+  return `<p>${esc(K.name)}${guns ? ' armed with ' + esc(guns) + '. It fires at the end of every round at the best enemy it can see.' : '. Unarmed cover that blocks movement and sight.'}</p>`
+    + `<p>Construction factor ${S.cf} of ${S.cfMax}.${S.hard ? ' Hardened: takes half damage.' : ''}${K.burns ? ' Can catch fire.' : ''} Immobile: -4 to hit.</p>`;
+}
