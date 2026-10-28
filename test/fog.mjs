@@ -52,7 +52,7 @@ const ok = (c, msg) => { if (!c) { fails++; console.log('FAIL', msg); } else con
     else room.aiStep();
     const msgs = sent.get(p1) || [];
     const last = msgs[msgs.length - 1];
-    if (!last || last.t !== 'update') continue;
+    if (!last || last.t !== 'update' || g.over) continue; // the final update reveals everything on purpose
     for (const m of last.state.mechs) {
       const real = g.mechs[m.id];
       if (m.hidden) { hiddenSeen++; if (m.x !== -1 || real.dead) leaks++; }
