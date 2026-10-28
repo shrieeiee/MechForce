@@ -1,7 +1,7 @@
 import { computeReach, canEndAt, pathFrom, reachKey, toHit, availableMechs, operational, canAct, activeSide, missionOf,
   dissipation, expectedDamage, totalArmor, maxArmor, secondsElapsed, attackDirection,
   moveModes, availMP, canConvert, conversionCost, pilotingMods, isQuadVee, onTracks, MOVE_HEAT,
-  toHitStructure, structureAt, envHeat, envHeatParts, isBurning, smokeAt } from '../core/rules.js';
+  toHitStructure, structureAt, envHeat, envHeatParts, isBurning, smokeAt, dfaDamage, dfaSelfDamage } from '../core/rules.js';
 import { WEAPONS, MISSIONS, CLASS_NAMES, TERRAIN, critName, STRUCTS, LOADOUTS, CLIMATE, TEAM_ZONE_NAMES } from '../core/data.js';
 import { neighbor, distance, facingToward, relBearing } from '../core/hex.js';
 import { fogView, fogEvents } from '../core/fog.js';
@@ -304,8 +304,8 @@ export class Battle {
     const scored = enemies.map((e) => {
       let ed = 0;
       for (const w of m.weapons) { const th = toHit(st, m, e, w); if (th.ok) ed += expectedDamage(w, th.p); }
-      const mth = toHit(st, m, e, null, { kind: 'kick' });
-      return { e, ed, can: ed > 0 || mth.ok, d: distance(m.x, m.y, e.x, e.y) };
+      const mth = ['kick', 'punch', 'dfa'].some((kind) => toHit(st, m, e, null, { kind }).ok);
+      return { e, ed, can: ed > 0 || mth, d: distance(m.x, m.y, e.x, e.y) };
     });
     // enemy (and neutral) structures can be shot too; they sort after mechs of equal value
     for (const S of st.structures || []) {
@@ -513,7 +513,7 @@ export class Battle {
   cycleMelee() {
     const ix = this.ix, st = this.state, m = st.mechs[ix.mechId], t = st.mechs[ix.targetId];
     if (this.structOf(ix.targetId)) { toast('Structures can only be shot at.'); return; }
-    const opts = [null, ...['punch', 'kick'].filter((k) => toHit(st, m, t, null, { kind: k }).ok)];
+    const opts = [null, ...['punch', 'kick', 'dfa'].filter((k) => toHit(st, m, t, null, { kind: k }).ok)];
     if (opts.length < 2) { toast('Melee needs an adjacent target in your front arc.'); return; }
     const i = opts.indexOf(ix.melee);
     ix.melee = opts[(i + 1) % opts.length];
@@ -868,7 +868,7 @@ export class Battle {
     const dir = S ? 'F' : attackDirection(st, m.x, m.y, t);
     const dirTxt = S ? (S.hard ? 'Hardened' : 'Immobile') : { F: 'Front', L: 'Left side', R: 'Right side', B: 'Rear shot' }[dir];
     const scale = Math.max(dist + 1, ...m.weapons.map((w) => w.rng));
-    const melee = S ? [] : ['punch', 'kick'].map((k) => ({ k, th: toHit(st, m, t, null, { kind: k }), dmg: k === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10) })).filter((x) => x.th.ok);
+    const melee = S ? [] : ['punch', 'kick', 'dfa'].map((k) => ({ k, th: toHit(st, m, t, null, { kind: k }), dmg: k === 'dfa' ? dfaDamage(m) : k === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10) })).filter((x) => x.th.ok);
     const nSel = rows.filter((r) => sel.has(r.w.i) && r.th.ok).length;
     const card = html(`<div class="unit-card target panel" style="--side:${s.color}">
       <div class="uc-head"><div><div class="eyebrow">${ICON.target} Target · ${dist} hex${dist === 1 ? '' : 'es'} · ${esc(s.name)}</div><b>${esc(S ? STRUCTS[S.kind].name : t.design)}</b></div>
@@ -915,8 +915,8 @@ export class Battle {
     for (const mo of melee) {
       const on = ix.melee === mo.k;
       const pct = Math.round(mo.th.p * 100);
-      const row = html(`<div class="wrow melee nav ${on ? 'on' : ''}" data-key="melee-${mo.k}" ${attr(MODE_MELEE[mo.k], `<p>${mo.k === 'kick' ? 'A kick does a fifth of your tonnage in damage to the legs and can knock the target down, but if you miss you may fall over yourself.' : 'A punch does a tenth of your tonnage in damage to the upper body. It needs a working arm.'}</p><p>Melee replaces your weapons this turn. Need <b>${mo.th.tn}+</b>: ${pct}%.</p><ul class="mods-list">${mo.th.mods.map(modLine).join('')}</ul>`)}>
-        <span class="chk">${on ? ICON.check : ''}</span><span class="wn"><b>${ICON.fist} ${MODE_MELEE[mo.k]}</b><small>instead of shooting</small></span><span></span><span class="num">${mo.dmg}</span><span class="num faint">0</span>
+      const row = html(`<div class="wrow melee nav ${on ? 'on' : ''}" data-key="melee-${mo.k}" ${attr(MODE_MELEE[mo.k], `<p>${MELEE_TIP[mo.k](m)}</p><p>Melee replaces your weapons this turn. Need <b>${mo.th.tn}+</b>: ${pct}%.</p><ul class="mods-list">${mo.th.mods.map(modLine).join('')}</ul>`)}>
+        <span class="chk">${on ? ICON.check : ''}</span><span class="wn"><b>${ICON.fist} ${mo.k === 'dfa' ? 'DFA' : MODE_MELEE[mo.k]}</b><small>${mo.k === 'dfa' ? `you take ${dfaSelfDamage(m)} to the legs` : 'instead of shooting'}</small></span><span></span><span class="num">${mo.dmg}</span><span class="num faint">0</span>
         <span class="pm ${pct >= 58 ? 'good' : 'mid'}"><s style="width:${pct}%"></s><em>${pct}%</em></span></div>`);
       row.addEventListener('click', () => { ix.melee = on ? null : mo.k; sfx('ui-move'); this.renderCards(); });
       row._th = mo.th;
@@ -971,5 +971,10 @@ function shortReason(r) {
   return { 'Out of range': 'Too far', 'Out of arc': 'Wrong way', 'No line of sight': 'No sight', 'No ammo': 'Empty', 'Destroyed': 'Broken' }[r] || r;
 }
 
-const MODE_MELEE = { punch: 'Punch', kick: 'Kick' };
+const MODE_MELEE = { punch: 'Punch', kick: 'Kick', dfa: 'Death from above' };
+const MELEE_TIP = {
+  punch: () => 'A punch does a tenth of your tonnage in damage to the upper body. It needs a working arm.',
+  kick: () => 'A kick does a fifth of your tonnage in damage to the legs and can knock the target down, but if you miss you may fall over yourself.',
+  dfa: (m) => `Land on the target from your jump: ${dfaDamage(m)} damage to its upper body in 5-point groups, and it must roll to stay standing. Your own legs take ${dfaSelfDamage(m)} and you must roll (+4) to stay up. <b>If you miss, you crash to the ground</b> and take ${Math.ceil(m.tons / 10) * 3} damage. Woods and smoke don't help the target; the target can't be standing on higher ground.`,
+};
 export { critName, relBearing, CLASS_NAMES };

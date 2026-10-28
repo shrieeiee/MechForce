@@ -965,9 +965,12 @@ export class Renderer {
           const key = e.id + ':' + e.target;
           if (this.framed !== key || !this.onScreen(e.id) || !this.onScreen(e.target)) { this.frameMechs(e.id, e.target); await this.settleFraming(e.id, e.target); }
           if (e.k === 'shot') await this.animShot(v, this.mechs.get(e.target), e, state, sp);
+          else if (e.kind === 'dfa') await this.animDFA(v, this.mechs.get(e.target), e, sp);
           else await this.animMelee(v, this.mechs.get(e.target), e, sp);
           break;
         }
+        case 'blast': await this.animBlast(e, sp); break;
+        case 'blasthit': if (v) this.float(v, String(e.dmg), 'dmg'); break;
         case 'boom': if (v) { const p = this.bodyPoint(v, 0.2); this.explosion(p, 1.6); sfx('boom', { size: 1.3, pan: this.panOf(p) }); await sleep(400 / sp); } break;
         case 'locgone': if (v) { const p = this.bodyPoint(v); this.explosion(p, 0.8); this.spawn(p, { n: 16, color: '#ffe08a', size: 0.12, speed: 5, life: 0.5, gravity: 9, grow: 0 }); } break;
         case 'crit': if (v) { this.float(v, critShort(e.code), 'crit'); } break;
@@ -1202,6 +1205,58 @@ export class Renderer {
     if (e.hit) { const p = this.bodyPoint(t, 0.2); this.explosion(p, 0.7); sfx('melee'); this.float(t, String(e.dmg), 'dmg'); }
     else { sfx('servo'); this.float(t, 'MISS', 'miss'); }
     await this.tween(220 / sp, (k) => { root.position.copy(p0).addScaledVector(dir, 1 - k); });
+  }
+
+  // Death from above: an arc up and down onto the target, a heavy impact, then back to its hex
+  async animDFA(v, t, e, sp) {
+    if (!t) return;
+    this.aimAt(v, t);
+    const root = v.model.root;
+    const p0 = root.position.clone();
+    const to = t.model.root.position.clone();
+    const top = to.clone(); top.y += t.model.height * 0.75;
+    const peak = Math.max(p0.y, top.y) + 3.2;
+    sfx('jet', { pan: this.panOf(p0) });
+    this.spawn(p0.clone().add(new THREE.Vector3(0, 0.3, 0)), { n: 14, color: '#ffb347', size: 0.35, speed: 1.2, life: 0.5, up: -0.4 });
+    const land = e.hit ? top : to.clone().lerp(p0, 0.45);
+    await this.tween(520 / sp, (k) => {
+      const h = 4 * k * (1 - k);
+      root.position.set(p0.x + (land.x - p0.x) * k, p0.y + (land.y - p0.y) * k + h * (peak - Math.max(p0.y, land.y)), p0.z + (land.z - p0.z) * k);
+    });
+    if (e.hit) {
+      const p = this.bodyPoint(t, 0.2);
+      this.explosion(p, 1.3); sfx('melee'); sfx('boom', { size: 0.8, pan: this.panOf(p) });
+      this.spawn(to.clone().add(new THREE.Vector3(0, 0.2, 0)), { n: 18, color: '#8a7a66', size: 0.5, speed: 2.4, life: 1, normal: true, opacity: 0.5 });
+      this.float(t, `${e.dmg} DFA`, 'dmg');
+      const tr = t.model.root, t0 = tr.position.clone();
+      await this.tween(160 / sp, (k) => { tr.position.y = t0.y - Math.sin(k * Math.PI) * 0.25; });
+      tr.position.copy(t0);
+      await this.tween(380 / sp, (k) => { root.position.set(land.x + (p0.x - land.x) * k, land.y + (p0.y - land.y) * k + 4 * k * (1 - k) * 1.2, land.z + (p0.z - land.z) * k); });
+    } else {
+      sfx('melee'); this.float(t, 'MISS', 'miss');
+      this.spawn(land.clone().add(new THREE.Vector3(0, 0.2, 0)), { n: 16, color: '#8a7a66', size: 0.5, speed: 2, life: 1, normal: true, opacity: 0.5 });
+      await this.tween(260 / sp, (k) => { root.position.lerpVectors(land, p0, k); });
+    }
+    root.position.copy(p0);
+  }
+
+  // Reactor breach or ammo blast: fireball, a shockwave ring across the ground, debris
+  async animBlast(e, sp) {
+    if (!this.map) return;
+    const c = hexWorld(e.x, e.y); c.y = this.tileTop(e.x, e.y) + 0.6;
+    this.focusHex(e.x, e.y); await sleep(200 / sp);
+    const big = e.r > 1 ? 3.2 : 1.8;
+    this.explosion(c, big);
+    this.spawn(c, { n: 30, color: '#fff2c0', size: 0.25, speed: 7 * (e.r > 1 ? 1.3 : 1), life: 0.7, gravity: 6, grow: 0 });
+    this.spawn(c, { n: 14, color: '#2b2b2b', size: 1.4, speed: 1.2, life: 2.6, rise: 1.6, normal: true, opacity: 0.6, grow: 3 });
+    sfx('boom', { size: e.r > 1 ? 2.4 : 1.6, pan: this.panOf(c) });
+    const geo = new THREE.RingGeometry(0.8, 1, 48); geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({ color: e.r > 1 ? '#bfe6ff' : '#ffc070', transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(geo, mat); ring.position.set(c.x, c.y - 0.45, c.z);
+    this.fxGroup.add(ring);
+    const reach = (e.r + 0.6) * 1.75;
+    await this.tween(650 / sp, (k) => { ring.scale.setScalar(0.3 + k * reach); mat.opacity = 0.9 * (1 - k); });
+    this.fxGroup.remove(ring); geo.dispose(); mat.dispose();
   }
 
   float(v, text, cls) {

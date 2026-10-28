@@ -102,7 +102,7 @@ export function brackets(w) {
 
 const MOD_EXPLAIN = {
   'Gunnery': 'Your pilot\'s gunnery skill. This is the starting number to beat on two dice.',
-  'Piloting': 'Your pilot\'s piloting skill — the starting number for punches and kicks.',
+  'Piloting': 'Your pilot\'s piloting skill — the starting number for punches, kicks and death from above.',
   'Medium range': 'The target is in this weapon\'s middle range band.',
   'Long range': 'The target is near this weapon\'s maximum range.',
   'Minimum range': 'Too close: this weapon needs room to work.',
@@ -269,7 +269,9 @@ export const MANUAL = [
     <p>A shot hits when two dice beat the <b>target number</b>. It starts at your pilot's gunnery (4) and goes up for range, movement, cover and heat. Need 7 or more? That's about 58%. Need 10? Only 17%.</p>
     <p>Weapons have short, medium and long range bands (+0, +2, +4). Some (LRMs, Plasma, AC/2, AC/5) are bad at very close range.</p>
     <p>Lines of sight are blocked by higher hills, or by three points of woods in between.</p>
-    <p>Next to an enemy you can <b>punch</b> or <b>kick</b> instead. Kicks hit hard and can knock the target over, but a missed kick may topple you.</p>` },
+    <p>Next to an enemy you can <b>punch</b> or <b>kick</b> instead. Kicks hit hard and can knock the target over, but a missed kick may topple you.</p>
+    <p><b>Death from above</b>: jump next to an enemy, then press Melee to come down on top of it. It does three times a punch's damage to the upper body and can knock the target over, but your own legs take a kick's worth of damage, and if you miss you crash to the ground hard. You can't land on a mech standing on higher ground.</p>
+    <p><b>Exploding mechs</b>: when an engine is destroyed, the reactor can lose containment (10+ on two dice) and blow apart, hitting everything within 2 hexes (half damage at 2) — engine rating ÷ 10, up to 40. A mech torn apart by its own ammo sprays its neighbours too. Blasts can knock mechs over, set woods alight and flatten structures; chain reactions happen.</p>` },
   { k: 'heat', t: 'Heat', body: `
     <p>Every mech has a heat scale. Moving and firing add heat; heat sinks remove it at the end of each activation.</p>
     <ul class="mods-list"><li><span class="mv">5+</span> lose movement</li><li><span class="mv">8+</span> aiming penalty</li><li><span class="mv">14+</span> chance to shut down and lose a turn</li><li><span class="mv">19+</span> chance your ammo explodes</li><li><span class="mv">30</span> automatic shutdown</li></ul>

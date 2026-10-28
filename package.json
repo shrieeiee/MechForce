@@ -27,7 +27,7 @@
     "build": "node build.mjs",
     "start": "npm run build && electron .",
     "server": "npm run build && node dist/server.cjs --port 7373",
-    "test": "node test/sim.mjs && node test/chassis.mjs && node test/fog.mjs && node test/structures.mjs",
+    "test": "node test/sim.mjs && node test/chassis.mjs && node test/fog.mjs && node test/structures.mjs && node test/dfa.mjs",
     "dist:win": "npm run build && electron-builder --win --x64",
     "dist:linux": "npm run build && electron-builder --linux --x64",
     "android:sync": "npm run build && npx cap sync android"

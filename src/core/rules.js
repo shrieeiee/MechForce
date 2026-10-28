@@ -667,8 +667,13 @@ export function toHit(st, att, tgt, w, opts = {}) {
     add('Arm actuators', armMods(att, w.loc));
   } else {
     if (dist !== 1) return { ok: false, reason: 'Not adjacent', tn: 99, mods, dist };
-    if (!inArc(att, 2, tgt.x, tgt.y, pos)) return { ok: false, reason: 'Out of arc', tn: 99, mods, dist };
-    if (Math.abs(elevOf(st, pos.x, pos.y) - elevOf(st, tgt.x, tgt.y)) > 1) return { ok: false, reason: 'Elevation', tn: 99, mods, dist };
+    const dfa = opts.kind === 'dfa';
+    // death from above: the attacker comes down on the target from a jump, so arc and
+    // height don't matter, but it has to have jumped this turn
+    if (dfa && mode !== 'jump') return { ok: false, reason: 'Jump first', tn: 99, mods, dist };
+    if (dfa && !tgt.prone && elevOf(st, tgt.x, tgt.y) > elevOf(st, pos.x, pos.y)) return { ok: false, reason: 'Target is higher', tn: 99, mods, dist };
+    if (!dfa && !inArc(att, 2, tgt.x, tgt.y, pos)) return { ok: false, reason: 'Out of arc', tn: 99, mods, dist };
+    if (!dfa && Math.abs(elevOf(st, pos.x, pos.y) - elevOf(st, tgt.x, tgt.y)) > 1) return { ok: false, reason: 'Elevation', tn: 99, mods, dist };
     if (onTracks(att) && isQuadVee(att)) return { ok: false, reason: 'Vehicle mode', tn: 99, mods, dist };
     tn = att.pilot.pil; mods.length = 0; mods.push({ label: 'Piloting', v: att.pilot.pil });
     if (opts.kind === 'kick') add('Kick', -2);
@@ -683,9 +688,13 @@ export function toHit(st, att, tgt, w, opts = {}) {
   add('Target movement', moveMod(tgt.lastMove));
   if (tgt.prone) add('Target prone', dist <= 1 ? -2 : 1);
   if (tgt.shutdown || tgt.pilot.ko) add('Target immobile', -4);
-  add('Woods', los.woods + TERRAIN[tileOf(st, tgt.x, tgt.y)].woods);
-  add('Smoke', (los.smoke || 0) + (st.smoke ? smokeAt(st, tgt.x, tgt.y) : 0));
-  if (TERRAIN[tileOf(st, tgt.x, tgt.y)].depth) add('Partial cover', 1);
+  // death from above comes down from the sky: woods, smoke and cover don't affect it
+  const fromAbove = opts.kind === 'dfa' && !w;
+  if (!fromAbove) {
+    add('Woods', los.woods + TERRAIN[tileOf(st, tgt.x, tgt.y)].woods);
+    add('Smoke', (los.smoke || 0) + (st.smoke ? smokeAt(st, tgt.x, tgt.y) : 0));
+    if (TERRAIN[tileOf(st, tgt.x, tgt.y)].depth) add('Partial cover', 1);
+  }
   add('Heat', heatToHit(att.heat));
   add('Sensors damaged', att.sensorHits * 2);
   if (att.prone) add('You are prone', 2);
@@ -753,8 +762,46 @@ function destroyMech(st, m, ev, by, why) {
   log(st, ev, `${m.design} (${m.pilot.name}) is DESTROYED${why ? ' — ' + why : ''}!`, { tone: 'kill', id: m.id, side: m.side });
   if (by && isEnemy(by, m)) by.stats.kills++;
   dropItem(st, m, ev);
+  if (!m.exited && m.x >= 0) {
+    // a wrecked fusion engine can lose containment (on 10+), and ammo that blows a mech apart
+    // throws burning debris at its neighbours
+    if (why === 'engine destroyed' && roll2d6(st) >= REACTOR_BREACH_TN) blast(st, m, reactorBlast(m), 2, 'REACTOR BREACH', ev);
+    else if (m.booming) blast(st, m, Math.ceil(m.booming / 4), 1, 'The ammo explosion', ev);
+  }
   if (st.mission === 'spy' && st.item && st.item.carrier === m.id) {
     // the spy dies with his ride
+  }
+}
+
+export const REACTOR_BREACH_TN = 10;
+// blast strength from the engine rating (tonnage x walking speed): a 300-rated engine does 30
+export const reactorBlast = (m) => Math.min(40, Math.ceil(m.tons * (m.walkBase || 4) / 10));
+// Everything within `radius` hexes takes `dmg` (half that at range 2), in 5-point groups
+// from the blast's direction; mechs caught in it must keep their balance.
+function blast(st, src, dmg, radius, what, ev) {
+  if (dmg <= 0) return;
+  ev.push({ k: 'blast', id: src.id, x: src.x, y: src.y, r: radius, dmg });
+  log(st, ev, radius > 1 ? `${what}! The ${src.design}'s reactor explodes — ${dmg} damage to everything nearby!` : `${what} tears the ${src.design} apart — ${dmg} damage to everything next to it!`, { tone: 'crit', id: src.id, side: src.side });
+  for (const m of st.mechs) {
+    if (m === src || m.dead || m.exited || m.x < 0) continue;
+    const d = distance(src.x, src.y, m.x, m.y);
+    if (d < 1 || d > radius) continue;
+    const amt = d === 1 ? dmg : Math.floor(dmg / 2);
+    if (amt <= 0) continue;
+    const dir = attackDirection(st, src.x, src.y, m);
+    groupDamage(st, m, amt, () => rollLocation(st, dir, m).loc, dir === 'B', ev, null);
+    ev.push({ k: 'blasthit', id: m.id, dmg: amt });
+    if (!m.dead) pilotingCheck(st, m, d === 1 ? 2 : 1, 'blast', ev);
+  }
+  for (const s of st.structures || []) {
+    if (s.dead) continue;
+    const d = distance(src.x, src.y, s.x, s.y);
+    if (d < 1 || d > radius) continue;
+    damageStructure(st, s, d === 1 ? dmg : Math.floor(dmg / 2), ev, null);
+  }
+  for (let y = src.y - radius; y <= src.y + radius; y++) for (let x = src.x - radius; x <= src.x + radius; x++) {
+    if (x < 0 || y < 0 || x >= st.map.w || y >= st.map.h || distance(src.x, src.y, x, y) > radius) continue;
+    tryIgnite(st, x, y, distance(src.x, src.y, x, y) <= 1 ? 6 : 9, ev, what);
   }
 }
 
@@ -790,14 +837,18 @@ function destroyLocation(st, m, loc, ev, by) {
 
 // A QuadVee in vehicle mode can't fall (it's a tank on four tracks)
 const canFall = (m) => !(isQuadVee(m) && m.vmode === 'vehicle');
-function fall(st, m, ev, why) {
+// Falling damage is tonnage/10 per level fallen plus one, in 5-point groups
+function fall(st, m, ev, why, levels = 0) {
   if (m.dead || m.prone || !canFall(m)) return;
   m.prone = true;
   ev.push({ k: 'fall', id: m.id });
   log(st, ev, `${m.design} falls! (${why})`, { tone: 'bad', id: m.id, side: m.side });
-  const dmg = Math.ceil(m.tons / 10);
-  const hl = rollLocation(st, 'F', m);
-  applyDamage(st, m, hl.loc, false, dmg, ev, null, { noFall: true });
+  let dmg = Math.ceil(m.tons / 10) * (levels + 1);
+  while (dmg > 0 && !m.dead) {
+    const d = Math.min(5, dmg); dmg -= d;
+    const hl = rollLocation(st, 'F', m);
+    applyDamage(st, m, hl.loc, false, d, ev, null, { noFall: true });
+  }
   pilotHit(st, m, 1, ev, 'fall');
 }
 
@@ -839,7 +890,9 @@ function ammoExplosion(st, m, w, ev, by) {
   ev.push({ k: 'boom', id: m.id, loc, dmg });
   log(st, ev, `AMMO EXPLOSION! ${m.design}'s ${W.short} ammo cooks off for ${dmg} damage!`, { tone: 'crit', id: m.id, side: m.side });
   tryIgnite(st, m.x, m.y, 8, ev, 'The explosion');
+  m.booming = dmg;
   applyDamage(st, m, loc, false, dmg, ev, by, { internalOnly: true });
+  delete m.booming;
   pilotHit(st, m, 2, ev, 'ammo explosion');
 }
 
@@ -1206,6 +1259,7 @@ export function applyCommand(st, side, cmd) {
     }
     case 'melee': {
       if (act.phase === 'done') return fail('Already attacked');
+      if (!['punch', 'kick', 'dfa'].includes(cmd.kind)) return fail('Unknown attack');
       const tgt = st.mechs[cmd.target];
       const th = tgt && toHit(st, m, tgt, null, { kind: cmd.kind });
       if (!th || !th.ok) return fail(th ? th.reason : 'Bad target');
@@ -1299,7 +1353,59 @@ function fireWeapons(st, m, tgt, weapons, ev) {
   void startPilot;
 }
 
+// Hit locations for punches (upper body) and kicks (the legs facing the attacker)
+const punchLoc = (st, dir) => ({ F: [4, 1, 2, 3, 5, 0], L: [1, 1, 2, 4, 4, 0], R: [3, 3, 2, 5, 5, 0], B: [4, 1, 2, 3, 5, 0] }[dir])[d6(st) - 1];
+function kickLoc(st, tgt, dir) {
+  const tb = bodyOf(tgt);
+  if (tb === 'tripod') return tripodLeg(st, dir);
+  const t = tb === 'quad'
+    ? { F: [5, 5, 5, 4, 4, 4], L: [4, 4, 4, 6, 6, 6], R: [5, 5, 5, 7, 7, 7], B: [7, 7, 7, 6, 6, 6] }[dir]
+    : { F: [7, 7, 7, 6, 6, 6], L: [6, 6, 6, 6, 6, 6], R: [7, 7, 7, 7, 7, 7], B: [7, 7, 7, 6, 6, 6] }[dir];
+  return t[d6(st) - 1];
+}
+// Damage in 5-point groups, each to a new location
+function groupDamage(st, tgt, total, pick, rear, ev, by) {
+  const locs = [];
+  while (total > 0 && !tgt.dead) {
+    const d = Math.min(5, total); total -= d;
+    const loc = pick();
+    locs.push(loc);
+    applyDamage(st, tgt, loc, rear, d, ev, by);
+    if (loc === 0 && !tgt.dead) pilotHit(st, tgt, 1, ev, 'head hit');
+  }
+  return locs;
+}
+
+// Death from above (Total Warfare): a mech that jumped this turn lands on an adjacent enemy.
+// Piloting roll to hit; the target takes tonnage/10 x 3 to the upper body, the attacker
+// tonnage/5 to its own legs, and both must keep their balance. A miss means the attacker
+// crashes to the ground as if it fell two levels.
+export const dfaDamage = (m) => Math.ceil(m.tons / 10) * 3;
+export const dfaSelfDamage = (m) => Math.ceil(m.tons / 5);
+function deathFromAbove(st, m, tgt, th, ev) {
+  m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
+  const r = roll2d6(st);
+  const hit = r >= th.tn;
+  const dir = attackDirection(st, m.x, m.y, tgt);
+  const dmg = dfaDamage(m);
+  ev.push({ k: 'melee', id: m.id, target: tgt.id, kind: 'dfa', hit, tn: th.tn, roll: r, dmg: hit ? dmg : 0, loc: -1 });
+  if (hit) {
+    log(st, ev, `DEATH FROM ABOVE! ${m.design} lands on ${tgt.design} for ${dmg} damage!`, { id: m.id, side: m.side, tone: 'hit' });
+    groupDamage(st, tgt, dmg, () => (bodyOf(tgt) === 'quad' && !tgt.prone ? kickLoc(st, tgt, dir) : punchLoc(st, dir)), dir === 'B', ev, m);
+    if (!tgt.dead) pilotingCheck(st, tgt, 2, 'death from above', ev);
+    if (!m.dead) {
+      log(st, ev, `${m.design}'s legs take ${dfaSelfDamage(m)} damage from the impact.`, { id: m.id, side: m.side });
+      groupDamage(st, m, dfaSelfDamage(m), () => kickLoc(st, m, 'F'), false, ev, null);
+      if (!m.dead) pilotingCheck(st, m, 4, 'landing a death from above', ev);
+    }
+  } else {
+    log(st, ev, `${m.design} misses its death from above and crashes to the ground!`, { id: m.id, side: m.side, tone: 'miss' });
+    fall(st, m, ev, 'missed death from above', 2);
+  }
+}
+
 function physical(st, m, tgt, kind, th, ev) {
+  if (kind === 'dfa') { deathFromAbove(st, m, tgt, th, ev); return; }
   m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
   const r = roll2d6(st);
   const hit = r >= th.tn;
@@ -1310,16 +1416,10 @@ function physical(st, m, tgt, kind, th, ev) {
     dmg = Math.ceil(m.tons / 10);
     const ah = actuCount(m, arm === 4 ? [30, 31] : [34, 35]);
     dmg = Math.max(1, Math.floor(dmg / (1 + ah)));
-    const t = { F: [4, 1, 2, 3, 5, 0], L: [1, 1, 2, 4, 4, 0], R: [3, 3, 2, 5, 5, 0], B: [4, 1, 2, 3, 5, 0] }[dir];
-    loc = t[d6(st) - 1];
+    loc = punchLoc(st, dir);
   } else {
     dmg = Math.ceil(m.tons / 5);
-    const tb = bodyOf(tgt);
-    const t = tb === 'quad' // kicks land on the legs facing the attacker
-      ? { F: [5, 5, 5, 4, 4, 4], L: [4, 4, 4, 6, 6, 6], R: [5, 5, 5, 7, 7, 7], B: [7, 7, 7, 6, 6, 6] }[dir]
-      : { F: [7, 7, 7, 6, 6, 6], L: [6, 6, 6, 6, 6, 6], R: [7, 7, 7, 7, 7, 7], B: [7, 7, 7, 6, 6, 6] }[dir];
-    loc = t[d6(st) - 1];
-    if (tb === 'tripod') loc = tripodLeg(st, dir);
+    loc = kickLoc(st, tgt, dir);
   }
   ev.push({ k: 'melee', id: m.id, target: tgt.id, kind, hit, tn: th.tn, roll: r, dmg, loc });
   if (hit) {
@@ -1345,3 +1445,6 @@ export function expectedDamage(w, p) {
 export function totalArmor(m) { return m.armor.reduce((a, b) => a + b, 0) + m.internal.reduce((a, b) => a + b, 0); }
 export function maxArmor(m) { return m.armorMax.reduce((a, b) => a + b, 0) + m.internalMax.reduce((a, b) => a + b, 0); }
 export { center, facingToward, turnCost, distance };
+
+// internal hooks for tests
+export const __test = { applyCrit: (...a) => applyCrit(...a) };

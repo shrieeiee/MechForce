@@ -1,7 +1,7 @@
 // Computer opponent. Returns one command at a time for the active AI side.
 import { WEAPONS, TERRAIN } from './data.js';
 import { computeReach, canEndAt, toHit, availableMechs, operational, canAct, lineOfSight, inArc, missionOf,
-  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo, toHitStructure, envHeat, smokeAt, isBurning, defenceTargets } from './rules.js';
+  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo, toHitStructure, envHeat, smokeAt, isBurning, defenceTargets, dfaDamage, dfaSelfDamage, pilotingMods, elevOf } from './rules.js';
 import { STRUCTS } from './data.js';
 import { distance, relBearing } from './hex.js';
 import { chance, nextRand } from './rng.js';
@@ -143,6 +143,12 @@ function evalPositions(st, m) {
             const p = chance(tn);
             if (p > 0) opts.push({ w: wp, ed: expectedDamage(wp, p), heat: wp.heat });
           }
+          if (mode === 'jump' && !stand && it.d === 1 && !e.hidden && m.tons >= 40 && (e.prone || elevOf(st, e.x, e.y) <= elevOf(st, x, y))) {
+            const p = chance(m.pilot.pil + 3 + moveModE(e) + (e.prone ? -2 : 0) + pilotingMods(m).reduce((a2, [, v2]) => a2 + v2, 0));
+            const dmg = dfaDamage(m);
+            const dfaVal = p * dmg * (totalArmor(e) < dmg * 2.5 ? 1.6 : 1) - p * dfaSelfDamage(m) * 0.25 - (1 - p) * dmg * 0.35;
+            offense = Math.max(offense, dfaVal);
+          }
           if (opts.length) {
             const v = bestVolley(opts, heatBudget(st, m, mvHeat));
             const finish = totalArmor(e) < v.dmg * 2.5 ? 1.6 : 1;
@@ -229,11 +235,13 @@ function chooseAttack(st, m) {
       let val = v.dmg * (killable ? 1.5 : 1) * (st.item && st.item.carrier === e.id ? 1.6 : 1);
       if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, target: e.id, weapons: v.picked.map((o) => o.w.i) } };
     }
-    for (const kind of ['kick', 'punch']) {
+    for (const kind of ['kick', 'punch', 'dfa']) {
       const th = toHit(st, m, e, null, { kind });
       if (!th.ok) continue;
-      const dmg = kind === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10);
-      const val = th.p * dmg * (kind === 'kick' ? 0.85 : 1);
+      const dmg = kind === 'dfa' ? dfaDamage(m) : kind === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10);
+      // death from above hurts the attacker too: its legs on a hit, a nasty fall on a miss
+      const risk = kind === 'dfa' ? th.p * dfaSelfDamage(m) * 0.25 + (1 - th.p) * dmg * 0.35 : 0;
+      const val = th.p * dmg * (kind === 'kick' ? 0.85 : 1) * (kind === 'dfa' && totalArmor(e) < dmg * 2.5 ? 1.6 : 1) - risk;
       if (val > best.v) best = { v: val, cmd: { type: 'melee', id: m.id, target: e.id, kind } };
     }
   }

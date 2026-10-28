@@ -38,7 +38,7 @@ Design custom mechs (title screen → Mech Lab, or the ★ Custom tab in the Mec
 
 ## Rules in brief
 
-Initiative each round; sides alternate activating one mech at a time. Walk / run / jump with facing and terrain costs (woods, rough, water, elevation). 2d6 to-hit with range, movement, cover, heat and damage modifiers. Hit locations by attack direction (front, sides, rear armour), damage transfer, critical hits from the real crit tables (ammo explosions, engine, gyro, actuators, cockpit, sensors, heat sinks, jump jets), heat with shutdown and ammo cook-off, falls, pilot injuries and consciousness rolls, punches and kicks. Each round is 50 seconds, as in the original's "500 seconds".
+Initiative each round; sides alternate activating one mech at a time. Walk / run / jump with facing and terrain costs (woods, rough, water, elevation). 2d6 to-hit with range, movement, cover, heat and damage modifiers. Hit locations by attack direction (front, sides, rear armour), damage transfer, critical hits from the real crit tables (ammo explosions, engine, gyro, actuators, cockpit, sensors, heat sinks, jump jets), heat with shutdown and ammo cook-off, falls, pilot injuries and consciousness rolls, punches, kicks and **death from above** (jump next to an enemy and land on it: 3× punch damage, your legs take a kick's worth, a miss means a crash). **Exploding mechs**: a destroyed engine can breach (10+) and blast everything within 2 hexes for engine rating ÷ 10 (max 40, half at 2 hexes); a mech destroyed by its own ammo damages its neighbours. Blasts can knock mechs down, start fires and chain. Each round is 50 seconds, as in the original's "500 seconds".
 
 ## Fog of war
 
