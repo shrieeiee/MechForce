@@ -41,6 +41,9 @@ export class Renderer {
     this.speed = 1;
     this.gl = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
+    // If the graphics driver resets, keep the context and rebuild the battlefield when it's back
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; console.warn('WebGL context lost'); });
+    canvas.addEventListener('webglcontextrestored', () => { this.lost = false; if (this.map) { const m = this.map; this.updateTerrain(m); } });
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
     this.gl.toneMappingExposure = 1.05;
     this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -57,6 +60,11 @@ export class Renderer {
     this.scene.add(this.sun, this.sun.target);
     this.world = new THREE.Group(); this.scene.add(this.world);
     this.fxGroup = new THREE.Group(); this.scene.add(this.fxGroup);
+    // Explosion flashes share a fixed pool of point lights. Adding and removing lights
+    // changes every material's shader, and a big volley could put dozens in the scene at
+    // once: on some PC graphics drivers that recompile fails and the 3D view goes blank.
+    this.flashPool = [];
+    for (let i = 0; i < 4; i++) { const l = new THREE.PointLight('#ffb35c', 0, 6, 2); l.userData.until = 0; this.scene.add(l); this.flashPool.push(l); }
     this.overlayGroup = new THREE.Group(); this.scene.add(this.overlayGroup);
     this.mechs = new Map();
     this.particles = [];
@@ -753,9 +761,12 @@ export class Renderer {
     this.flash(pos, big);
   }
   flash(pos, big = 1) {
-    const l = new THREE.PointLight('#ffb35c', 8 * big, 6 * big, 2);
-    l.position.copy(pos); this.fxGroup.add(l);
-    this.beams.push({ obj: l, age: 0, life: 0.25, light: true, base: 8 * big });
+    // reuse the dimmest light in the pool
+    let l = this.flashPool[0];
+    for (const c of this.flashPool) if (c.intensity < l.intensity) l = c;
+    l.position.copy(pos); l.distance = 6 * big; l.intensity = 8 * big;
+    l.userData.tok = (l.userData.tok || 0) + 1;
+    this.beams.push({ obj: l, age: 0, life: 0.25, light: true, pooled: true, tok: l.userData.tok, base: 8 * big });
   }
   beam(a, b, color, width, life = 0.3) {
     const dir = new THREE.Vector3().subVectors(b, a);
@@ -799,9 +810,9 @@ export class Renderer {
         b.obj.position.lerpVectors(b.proj.a, b.proj.b, t);
         b.obj.position.y += Math.sin(t * Math.PI) * b.proj.arc;
         if (b.proj.trail && Math.random() < 0.8) this.spawn(b.obj.position, { color: '#9a9a9a', size: 0.18, speed: 0.2, life: 0.6, normal: true, opacity: 0.45, grow: 2 });
-      } else if (b.light) b.obj.intensity = b.base * (1 - k);
+      } else if (b.light) { if (!b.pooled || b.obj.userData.tok === b.tok) b.obj.intensity = Math.max(0, b.base * (1 - k)); }
       else if (b.mats) b.mats.forEach((m, j) => { m.opacity = (1 - k) * (j ? 0.55 : 1); });
-      if (k >= 1) { this.fxGroup.remove(b.obj); if (b.done) b.done(); this.beams.splice(i, 1); }
+      if (k >= 1) { if (b.pooled) { if (b.obj.userData.tok === b.tok) b.obj.intensity = 0; } else this.fxGroup.remove(b.obj); if (b.done) b.done(); this.beams.splice(i, 1); }
     }
   }
 

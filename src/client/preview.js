@@ -138,8 +138,11 @@ export class MechPreview {
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
     sp.position.copy(pos); sp.scale.setScalar(size * 2.2);
     this.fx.add(sp);
-    const l = new THREE.PointLight(color, 4, 2.5, 2); l.position.copy(pos); this.fx.add(l);
-    this.effects.push({ o: sp, life: 0.15, age: 0, kind: 'fade' }, { o: l, life: 0.15, age: 0, kind: 'light', base: 4 });
+    // a fixed pair of lights, reused: adding lights would recompile every shader
+    if (!this.flashPool) { this.flashPool = [0, 1].map(() => { const l = new THREE.PointLight('#ffffff', 0, 2.5, 2); this.scene.add(l); return l; }); this.flashN = 0; }
+    const l = this.flashPool[this.flashN++ % 2];
+    l.color.set(color); l.position.copy(pos); l.intensity = 4;
+    this.effects.push({ o: sp, life: 0.15, age: 0, kind: 'fade' }, { o: l, life: 0.15, age: 0, kind: 'light', base: 4, pooled: true });
   }
   beam(a, b, color, width) {
     const len = a.distanceTo(b);
@@ -241,7 +244,7 @@ export class MechPreview {
       e.age += dt;
       const k = e.age / e.life;
       if (e.kind === 'fade') e.o.material.opacity = 1 - k;
-      else if (e.kind === 'light') e.o.intensity = e.base * (1 - k);
+      else if (e.kind === 'light') e.o.intensity = Math.max(0, e.base * (1 - k));
       else if (e.kind === 'beam') e.o.children.forEach((c, j) => { c.material.opacity = (1 - k) * (j ? 0.5 : 1); });
       else if (e.kind === 'particle') { e.o.position.addScaledVector(e.vel, dt); e.o.scale.setScalar(e.size * (1 + k * 2)); e.o.material.opacity = 1 - k; }
       else if (e.kind === 'proj') {
@@ -249,7 +252,7 @@ export class MechPreview {
         if (e.trail && Math.random() < 0.9) this.particle(e.o.position.clone(), new THREE.Vector3(0, 0.2, 0), '#8a8a8a', 0.07, 0.4);
         e.o.material.opacity = 1 - k * 0.5;
       }
-      if (k >= 1) { this.fx.remove(e.o); if (e.o.material) e.o.material.dispose(); this.effects.splice(i, 1); }
+      if (k >= 1) { if (e.pooled) e.o.intensity = 0; else { this.fx.remove(e.o); if (e.o.material) e.o.material.dispose(); } this.effects.splice(i, 1); }
     }
     this.gl.render(this.scene, this.camera);
   }
