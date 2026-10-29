@@ -3,6 +3,7 @@
 import { createGame, applyCommand, activeSide } from './rules.js';
 import { aiNextCommand } from './ai.js';
 import { MECHS, MISSIONS, PROTOCOL, VERSION, SIDE_NAMES, SIDE_COLORS, mechBV } from './data.js';
+import { sanitizePilot } from './pilots.js';
 import { buildTemplate } from './custom.js';
 import { fogView, fogEvents, viewTeams } from './fog.js';
 import { sanitizeMap } from './maps.js';
@@ -206,10 +207,11 @@ export class Room {
         if (msg.ctrl === 'me') {
           if (sl.ctrl !== 'open' && sl.ctrl !== 'ai' && sl.ctrl !== id && !(this.local)) return err('Slot taken');
           if (!this.local) this.slots.forEach((s) => { if (s.ctrl === id) s.ctrl = 'open'; });
+          if (sl.ctrl !== id) sl.pilots = [];
           sl.ctrl = id; sl.ready = false;
         } else if (msg.ctrl === 'ai' || msg.ctrl === 'open') {
           if (!isHost && sl.ctrl !== id) return err('Only the host can change that slot');
-          sl.ctrl = msg.ctrl; sl.ready = msg.ctrl === 'ai';
+          sl.ctrl = msg.ctrl; sl.ready = msg.ctrl === 'ai'; sl.pilots = [];
           if (msg.ctrl === 'ai') sl.lance = autoLance(rid(), this.settings.tonnage, this.settings.lanceSize);
         }
         return this.pushLobby();
@@ -222,6 +224,14 @@ export class Room {
         if ((msg.lance || []).length && lance.length < Math.min((msg.lance || []).length, this.settings.lanceSize)) this.send(id, { t: 'error', msg: 'A custom design was rejected because it breaks the construction rules.' });
         sl.lance = lance; sl.ready = false;
         if (msg.name) sl.name = String(msg.name).slice(0, 18);
+        return this.pushLobby();
+      }
+      // persistent pilots for this slot's mechs, by position in the lance
+      case 'pilots': {
+        const sl = this.slots[msg.side];
+        if (!sl || this.game) return;
+        if (sl.ctrl !== id) return err('Not your slot');
+        sl.pilots = (Array.isArray(msg.pilots) ? msg.pilots : []).slice(0, 4).map((p) => (p ? sanitizePilot(p) : null));
         return this.pushLobby();
       }
       case 'ready': {
@@ -246,7 +256,8 @@ export class Room {
         this.game = createGame({
           seed: this.settings.seed, mission: this.settings.mission, mapSize: this.settings.mapSize, theme: this.settings.theme, fog: !!this.settings.fog,
           customMap: this.settings.customMap || null, defences: this.settings.defences,
-          sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5 })),
+          gid: rid() + rid(),
+          sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5, pilots: sl.ctrl === 'ai' ? [] : sl.pilots || [] })),
         });
         for (const cl of this.clients.values()) if (cl.connected) this.send(cl.id, { t: 'start', state: this.viewFor(cl.id, this.game) });
         this.pushLobby();

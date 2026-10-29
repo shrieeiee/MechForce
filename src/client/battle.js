@@ -5,6 +5,7 @@ import { computeReach, canEndAt, pathFrom, reachKey, toHit, availableMechs, oper
 import { WEAPONS, MISSIONS, CLASS_NAMES, TERRAIN, critName, STRUCTS, LOADOUTS, CLIMATE, TEAM_ZONE_NAMES } from '../core/data.js';
 import { neighbor, distance, facingToward, relBearing } from '../core/hex.js';
 import { fogView, fogEvents } from '../core/fog.js';
+import { portraitSVG } from './portrait.js';
 import { $, $$, html, esc, promptBar, toast, banner, paperDoll, FocusNav, glyphHTML, floatText } from './ui.js';
 import { input } from './input.js';
 import { sfx, music } from './audio.js';
@@ -369,7 +370,16 @@ export class Battle {
     this.render();
   }
 
+  // the mech the player is commanding right now (for eject / self-destruct from the menu)
+  myActiveMech() {
+    const st = this.state;
+    if (!st || st.over || !this.mySides().includes(activeSide(st))) return null;
+    const id = st.act ? st.act.id : this.ix.mechId;
+    const m = id !== undefined && id !== null ? st.mechs[id] : null;
+    return m && m.side === activeSide(st) && canAct(m) && (st.act || !m.activated) ? m.id : null;
+  }
   send(cmd) {
+    if (cmd.type === 'eject' || cmd.type === 'selfdestruct') this.ix = { mode: 'sent' };
     const side = activeSide(this.state);
     this.session.send({ t: 'cmd', cmd, side });
   }
@@ -802,7 +812,7 @@ export class Battle {
           ${this.heatBar(m, proj)}
           <div class="lbl">Movement</div>
           <div class="modes ${mmodes.length + (isQuadVee(m) ? 1 : 0) > 3 ? 'four' : ''}">${mmodes.map(([k, mp]) => `<button class="mode ${k} ${selectable && baseMode(ix.moveMode) === k ? 'on' : ''} ${mp ? '' : 'none'}" data-mode="${k}" ${attr(BASE_LABEL[k] + ` · ${mp} MP`, `<p>${MODE_TIP[k]}</p>${m.body === 'quad' && (k === 'walk' || k === 'run') ? `<p>${SHIFT_TIP}</p>` : ''}<p>${moveDefense}</p>`)}>${ICON[k]}<span>${BASE_LABEL[k]}</span><b>${mp || '—'}</b></button>`).join('')}${isQuadVee(m) ? `<button class="mode convert ${selectable && isConv(ix.moveMode) ? 'on' : ''} ${conv ? '' : 'none'}" data-conv="1" ${attr(m.vmode === 'vehicle' ? 'Convert to BattleMech' : 'Convert to vehicle', CONVERT_TIP(conversionCost(m), m.vmode !== 'vehicle'))}>${ICON.convert}<span>Convert</span><b>${conversionCost(m)}</b></button>` : ''}</div>
-          <div class="pilot" ${attr('MechWarrior ' + m.pilot.name, pilotTip(m, pilotingMods(m)))}>${ICON.pilot}<span>${esc(m.pilot.name)}</span><span class="pips">${[0, 1, 2, 3, 4, 5].map((i) => `<i class="${i < m.pilot.hits ? 'on' : ''}"></i>`).join('')}</span></div>
+          <div class="pilot" ${attr('MechWarrior ' + m.pilot.name, pilotTip(m, pilotingMods(m)))}>${m.pilot.portrait ? portraitSVG(m.pilot.portrait, { size: 18, color: st.sides[m.side].color }) : ICON.pilot}<span>${esc(m.pilot.name)}</span><span class="faint num">${m.pilot.gun}/${m.pilot.pil}</span>${(m.pilot.abilities || []).length ? `<span class="ab-dot">${m.pilot.abilities.length}★</span>` : ''}<span class="pips">${[0, 1, 2, 3, 4, 5].map((i) => `<i class="${i < m.pilot.hits ? 'on' : ''}"></i>`).join('')}</span></div>
         </div>
       </div>
       ${tags.length ? `<div class="status-tags">${tags.map(([c, t]) => `<span class="tag ${c}" ${attr(t, statusTip(t))}>${esc(t)}</span>`).join('')}</div>` : ''}

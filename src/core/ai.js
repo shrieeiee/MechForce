@@ -260,6 +260,23 @@ function chooseAttack(st, m) {
 }
 void defenceTargets;
 
+// A computer pilot gives up a mech that can no longer fight: no working weapon and either
+// crippled legs or a badly hurt pilot. With enemies crowding in and no friends nearby, a
+// heavy mech's pilot may take them along with a self-destruct instead.
+function abandonShip(st, m) {
+  if (m.pilot.ko) return null;
+  const armed = m.weapons.some((w) => w.ok && w.ammo !== 0);
+  const legs = legsDown(m);
+  const hurt = m.pilot.hits >= 4;
+  if (armed || !(legs || hurt)) return null;
+  const close = st.mechs.filter((e) => operational(e) && !e.hidden && e.x >= 0 && distance(m.x, m.y, e.x, e.y) <= 2);
+  const foes = close.filter((e) => (e.team ?? e.side) !== (m.team ?? m.side)).length;
+  const friends = close.filter((e) => e !== m && (e.team ?? e.side) === (m.team ?? m.side)).length;
+  if (foes >= 1 && !friends && m.tons >= 50 && m.engineHits < 3) return { type: 'selfdestruct', id: m.id };
+  return { type: 'eject', id: m.id };
+}
+const legsDown = (m) => m.locGone.some((g, l) => g && (l >= 6)) && (m.body === 'quad' ? m.locGone.filter((g, l) => g && l >= 4).length >= 2 : true);
+
 export function aiNextCommand(st) {
   const side = activeSide(st);
   if (side < 0) return null;
@@ -270,7 +287,7 @@ export function aiNextCommand(st) {
     const speed = (x) => availMP(x, moveModes(x)[0]);
     av.sort((a, b) => speed(a) - speed(b) || a.id - b.id);
     const m = av[0];
-    return evalPositions(st, m) || { type: 'end', id: m.id };
+    return abandonShip(st, m) || evalPositions(st, m) || { type: 'end', id: m.id };
   }
   const m = st.mechs[st.act.id];
   if (st.act.phase === 'move') return evalPositions(st, m) || { type: 'end', id: m.id };

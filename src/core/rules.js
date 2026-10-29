@@ -8,6 +8,7 @@ import { generateMap, deployZone, inMap } from './map.js';
 import { buildTemplate, WSTAT } from './custom.js';
 import { neighbor, distance, relBearing, line, facingToward, turnCost, center } from './hex.js';
 import { nextRand, roll2d6, d6, hashSeed, chance } from './rng.js';
+import { sanitizePilot, hasAbility } from './pilots.js';
 
 export const HEAT_MAX = 30;
 const ROUND_SECONDS = 50;
@@ -21,7 +22,7 @@ export function createGame(setup) {
   const map = custom ? { ...custom, t: custom.t.slice(), e: custom.e.slice(), s: custom.s.map((d) => ({ ...d })) } : generateMap(seed, setup.mapSize || 'M', setup.theme || 'temperate');
   if (custom && setup.theme) map.theme = setup.theme;
   const st = {
-    v: 1, seed, rng: hashSeed('dice' + seed), mission: mission.id, map, round: 0, over: false, fog: !!setup.fog, seen: {},
+    v: 1, seed, gid: String(setup.gid || 'g' + seed), rng: hashSeed('dice' + seed), mission: mission.id, map, round: 0, over: false, fog: !!setup.fog, seen: {},
     structures: [], fire: {}, smoke: {}, wind: 0,
     sides: [], teams: [], mechs: [], order: [], turnIdx: 0, act: null, item: null, winner: null, log: [], seq: 0,
   };
@@ -70,7 +71,8 @@ export function createGame(setup) {
         tpl = b.ok ? b.template : MECHS[0];
       } else tpl = mechByName(typeof entry === 'string' ? entry : entry.design) || MECHS[0];
       const pos = zone[i * 2 % zone.length] || zone[0];
-      const pilot = (typeof entry === 'object' && entry.pilot) || PILOT_NAMES[(pilotIx++) % PILOT_NAMES.length];
+      const given = sd.pilots && sd.pilots[i] ? sanitizePilot(sd.pilots[i]) : null;
+      const pilot = given || { name: (typeof entry === 'object' && entry.pilot) || PILOT_NAMES[(pilotIx++) % PILOT_NAMES.length] };
       const f = team === 0 ? 0 : team === 1 ? 3 : team === 2 ? 5 : 1;
       const mech = makeMech(st.mechs.length, s, tpl, pilot, pos.x, pos.y, f, st.sides[s]);
       mech.team = team;
@@ -157,7 +159,7 @@ function fireAtStructure(st, m, s, weapons, ev) {
     hotGun(st, w, s.x, s.y, hit, ev);
     if (!hit) continue;
     m.stats.hits++; nh++;
-    const n = W.kind === 'm' ? clusterHits(st, W.n) : 1;
+    const n = W.kind === 'm' ? clusterHits(st, W.n, m) : 1;
     if (W.kind === 'm') shot.missiles = n;
     const dmg = damageStructure(st, s, n * w.dmg, ev, m);
     shot.hits.push({ dmg });
@@ -367,7 +369,8 @@ function makeMech(id, side, tpl, pilot, x, y, f, sd) {
       loc: w[7], slot: w[8], aloc: w[9], aslot: w[10], ok: true, i };
   });
   return {
-    id, side, design: tpl.n, custom: !!tpl.custom, cls: tpl.c, tons: tpl.t, pilot: { name: pilot, gun: sd.gunnery, pil: sd.piloting, hits: 0, ko: false },
+    id, side, design: tpl.n, custom: !!tpl.custom, cls: tpl.c, tons: tpl.t, pilot: { name: pilot.name, gun: pilot.gun ?? sd.gunnery, pil: pilot.pil ?? sd.piloting, hits: 0, ko: false,
+      ...(pilot.pid ? { pid: pilot.pid, full: pilot.full, abilities: pilot.abilities, portrait: pilot.portrait } : {}) },
     body: tpl.body || 'biped', mot: tpl.mot || null, vmode: 'mech',
     x, y, f, armor: tpl.a.slice(), armorMax: tpl.a.slice(), internal: tpl.i.slice(), internalMax: tpl.i.slice(),
     crit: tpl.cr.map((r) => r.slice()), critHit: tpl.cr.map((r) => r.map(() => 0)),
@@ -662,7 +665,10 @@ export function toHit(st, att, tgt, w, opts = {}) {
     if (dist > w.rng) return { ok: false, reason: 'Out of range', tn: 99, mods, dist };
     if (!inArc(att, w.loc, tgt.x, tgt.y, pos)) return { ok: false, reason: 'Out of arc', tn: 99, mods, dist };
     const s = Math.ceil(w.rng / 3), md = Math.ceil(w.rng * 2 / 3);
-    add(dist <= s ? '' : dist <= md ? 'Medium range' : 'Long range', dist <= s ? 0 : dist <= md ? 2 : 4);
+    const half = hasAbility(att, 'sniper') ? 2 : 1;
+    add(dist <= s ? '' : (dist <= md ? 'Medium range' : 'Long range') + (half > 1 ? ' (Sniper)' : ''), (dist <= s ? 0 : dist <= md ? 2 : 4) / half);
+    const kind = WEAPONS[w.t].kind;
+    if (hasAbility(att, 'spec_' + kind)) add({ e: 'Energy Specialist', b: 'Gunslinger', m: 'Missile Specialist' }[kind], -1);
     if (w.minr && dist <= w.minr) add('Minimum range', w.minr - dist + 1);
     add('Arm actuators', armMods(att, w.loc));
   } else {
@@ -677,6 +683,7 @@ export function toHit(st, att, tgt, w, opts = {}) {
     if (onTracks(att) && isQuadVee(att)) return { ok: false, reason: 'Vehicle mode', tn: 99, mods, dist };
     tn = att.pilot.pil; mods.length = 0; mods.push({ label: 'Piloting', v: att.pilot.pil });
     if (opts.kind === 'kick') add('Kick', -2);
+    if (hasAbility(att, 'melee')) add('Melee Specialist', -1);
     if (opts.kind === 'punch') {
       const arm = bestPunchArm(att);
       if (arm < 0) return { ok: false, reason: bodyOf(att) === 'quad' ? 'Four-legged' : 'No arms', tn: 99, mods, dist };
@@ -684,7 +691,7 @@ export function toHit(st, att, tgt, w, opts = {}) {
     }
     if (opts.kind === 'kick' && legState(att).legsGone) return { ok: false, reason: 'Leg destroyed', tn: 99, mods, dist };
   }
-  add({ walk: 'You walked', run: 'You ran', jump: 'You jumped' }[mode] || '', { walk: 1, run: 2, jump: 3 }[mode] || 0);
+  add({ walk: 'You walked', run: 'You ran', jump: hasAbility(att, 'jumpjack') ? 'You jumped (Jumping Jack)' : 'You jumped' }[mode] || '', { walk: 1, run: 2, jump: hasAbility(att, 'jumpjack') ? 1 : 3 }[mode] || 0);
   add('Target movement', moveMod(tgt.lastMove));
   if (tgt.prone) add('Target prone', dist <= 1 ? -2 : 1);
   if (tgt.shutdown || tgt.pilot.ko) add('Target immobile', -4);
@@ -744,7 +751,7 @@ function pilotHit(st, m, n, ev, why) {
   }
   log(st, ev, `${m.pilot.name} is injured${why ? ' (' + why + ')' : ''} — ${m.pilot.hits}/6 hits`, { id: m.id, side: m.side });
   if (!m.pilot.ko) {
-    const tn = [0, 3, 5, 7, 10, 11][m.pilot.hits];
+    const tn = [0, 3, 5, 7, 10, 11][m.pilot.hits] - (hasAbility(m, 'ironman') ? 2 : 0);
     const r = roll2d6(st);
     if (r < tn) {
       m.pilot.ko = true;
@@ -754,10 +761,30 @@ function pilotHit(st, m, n, ev, why) {
   }
 }
 
+// When a mech is destroyed its MechWarrior tries to eject (a piloting roll; a bad landing
+// costs a hit). A head or cockpit kill takes the pilot too. An unconscious pilot can't
+// eject, except that ammo explosions trigger the automatic ejection system; a pilot left
+// in the cockpit survives unless the reactor breaches.
+export const PILOT_DEATHS = ['head destroyed', 'cockpit destroyed', 'pilot killed'];
+function eject(st, m, ev, mod = 0, why = '') {
+  if (m.pilot.fate || m.exited) return;
+  const tn = pilotingTN(m, mod);
+  const r = roll2d6(st);
+  const ok = r >= tn;
+  m.pilot.fate = 'ejected';
+  if (!ok) m.pilot.hits = Math.min(6, m.pilot.hits + 1);
+  if (m.pilot.hits >= 6) m.pilot.fate = 'killed';
+  ev.push({ k: 'eject', id: m.id, ok, tn, roll: r, killed: m.pilot.fate === 'killed' });
+  log(st, ev, m.pilot.fate === 'killed' ? `${m.pilot.name} ejects from the ${m.design} but doesn't survive the landing.`
+    : ok ? `${m.pilot.name} ejects from the ${m.design}${why} and gets clear!` : `${m.pilot.name} ejects from the ${m.design}${why} — a hard landing (${m.pilot.hits}/6 hits), but alive.`,
+  { tone: m.pilot.fate === 'killed' ? 'bad' : 'info', id: m.id, side: m.side });
+}
 function destroyMech(st, m, ev, by, why) {
   if (m.dead) return;
   m.dead = true;
   ev.push({ k: 'destroyed', id: m.id, by: by ? by.id : -1 });
+  if (PILOT_DEATHS.includes(why)) m.pilot.fate = 'killed';
+  else if (!m.exited && (!m.pilot.ko || m.booming)) eject(st, m, ev, m.booming ? 0 : 0);
   if (!m.exited) tryIgnite(st, m.x, m.y, 8, ev, `The burning wreck of the ${m.design}`);
   log(st, ev, `${m.design} (${m.pilot.name}) is DESTROYED${why ? ' — ' + why : ''}!`, { tone: 'kill', id: m.id, side: m.side });
   if (by && isEnemy(by, m)) by.stats.kills++;
@@ -765,7 +792,10 @@ function destroyMech(st, m, ev, by, why) {
   if (!m.exited && m.x >= 0) {
     // a wrecked fusion engine can lose containment (on 10+), and ammo that blows a mech apart
     // throws burning debris at its neighbours
-    if (why === 'engine destroyed' && roll2d6(st) >= REACTOR_BREACH_TN) blast(st, m, reactorBlast(m), 2, 'REACTOR BREACH', ev);
+    if (why === 'self-destruct' || (why === 'engine destroyed' && roll2d6(st) >= REACTOR_BREACH_TN)) {
+      if (!m.pilot.fate) { m.pilot.fate = 'killed'; log(st, ev, `${m.pilot.name} was still in the cockpit.`, { tone: 'bad', id: m.id, side: m.side }); }
+      blast(st, m, reactorBlast(m), 2, why === 'self-destruct' ? 'SELF-DESTRUCT' : 'REACTOR BREACH', ev);
+    }
     else if (m.booming) blast(st, m, Math.ceil(m.booming / 4), 1, 'The ammo explosion', ev);
   }
   if (st.mission === 'spy' && st.item && st.item.carrier === m.id) {
@@ -774,6 +804,7 @@ function destroyMech(st, m, ev, by, why) {
 }
 
 export const REACTOR_BREACH_TN = 10;
+export const SELF_DESTRUCT_TN = 5;
 // blast strength from the engine rating (tonnage x walking speed): a 300-rated engine does 30
 export const reactorBlast = (m) => Math.min(40, Math.ceil(m.tons * (m.walkBase || 4) / 10));
 // Everything within `radius` hexes takes `dmg` (half that at range 2), in 5-point groups
@@ -867,7 +898,7 @@ export function pilotingMods(m) {
   return out;
 }
 export function pilotingTN(m, mod = 0) {
-  return m.pilot.pil + pilotingMods(m).reduce((s, [, v]) => s + v, 0) + mod;
+  return m.pilot.pil + pilotingMods(m).reduce((s, [, v]) => s + v, 0) + mod + (hasAbility(m, 'ace') ? -1 : 0);
 }
 
 // gyroLeg: rolls caused by gyro or leg actuator damage, which a mech running on tracks ignores
@@ -1062,7 +1093,9 @@ function startRound(st, ev) {
   if (roundLimit(st, ev)) return;
   ev.push({ k: 'round', n: st.round });
   // initiative: lowest roll activates first
-  const rolls = st.sides.map((s, i) => ({ i, r: roll2d6(st) + nextRand(st) * 0.5 }));
+  // highest roll moves last (an advantage); a Tactical Genius adds 1 for the side
+  const genius = (i) => (st.mechs.some((m) => m.side === i && canAct(m) && hasAbility(m, 'tactical')) ? 1 : 0);
+  const rolls = st.sides.map((s, i) => ({ i, r: roll2d6(st) + genius(i) + nextRand(st) * 0.5 }));
   st.sides.forEach((s, i) => { s.init = Math.floor(rolls[i].r); });
   st.order = rolls.filter((r) => sideAlive(st, r.i)).sort((a, b) => a.r - b.r).map((r) => r.i);
   ev.push({ k: 'init', order: st.order.slice(), rolls: st.sides.map((s) => s.init) });
@@ -1130,7 +1163,7 @@ function endActivation(st, m, ev) {
     m.heat = Math.max(0, Math.min(40, m.heat + gen - dissipation(st, m)));
     ev.push({ k: 'heat', id: m.id, heat: m.heat, gen, from: before });
     if (m.heat >= 14 && !m.shutdown) {
-      const tn = shutdownTN(m.heat);
+      const tn = shutdownTN(m.heat - (hasAbility(m, 'hotdog') ? 3 : 0));
       const r = roll2d6(st);
       if (r < tn) {
         m.shutdown = true;
@@ -1138,7 +1171,7 @@ function endActivation(st, m, ev) {
         log(st, ev, `${m.design} overheats and SHUTS DOWN! (heat ${m.heat})`, { tone: 'bad', id: m.id, side: m.side });
       }
     }
-    const at = ammoTN(m.heat);
+    const at = ammoTN(m.heat - (hasAbility(m, 'hotdog') ? 3 : 0));
     if (at && roll2d6(st) < at) {
       const w = m.weapons.find((w) => w.ammo > 0);
       if (w) { log(st, ev, `${m.design}'s ammo cooks off from the heat!`, { tone: 'crit', id: m.id, side: m.side }); ammoExplosion(st, m, w, ev, null); }
@@ -1272,6 +1305,35 @@ export function applyCommand(st, side, cmd) {
       endActivation(st, m, ev);
       break;
     }
+    // Abandon the mech: the pilot punches out and the mech is out of the battle
+    case 'eject': {
+      if (m.pilot.ko) return fail('Pilot is unconscious');
+      log(st, ev, `${m.pilot.name} abandons the ${m.design}!`, { tone: 'bad', id: m.id, side: m.side });
+      st.act = null; m.activated = true;
+      eject(st, m, ev, 0);
+      destroyMech(st, m, ev, null, 'abandoned');
+      checkVictory(st, ev);
+      if (!st.over) nextTurn(st, ev);
+      break;
+    }
+    // Override the reactor safeties and eject: on 5+ the engine blows like a breach
+    case 'selfdestruct': {
+      if (m.pilot.ko) return fail('Pilot is unconscious');
+      const r = roll2d6(st);
+      ev.push({ k: 'selfdestruct', id: m.id, ok: r >= SELF_DESTRUCT_TN, roll: r, tn: SELF_DESTRUCT_TN });
+      if (r < SELF_DESTRUCT_TN) {
+        log(st, ev, `${m.pilot.name} tries to override the ${m.design}'s reactor, but the safeties hold.`, { tone: 'miss', id: m.id, side: m.side });
+        endActivation(st, m, ev);
+        break;
+      }
+      log(st, ev, `${m.pilot.name} overrides the ${m.design}'s reactor safeties and punches out!`, { tone: 'crit', id: m.id, side: m.side });
+      st.act = null; m.activated = true;
+      eject(st, m, ev, 0);
+      destroyMech(st, m, ev, null, 'self-destruct');
+      checkVictory(st, ev);
+      if (!st.over) nextTurn(st, ev);
+      break;
+    }
     default: return fail('Unknown command');
   }
   st.seq++;
@@ -1279,13 +1341,13 @@ export function applyCommand(st, side, cmd) {
   return { ok: true, events: ev };
 }
 
-function clusterHits(st, n) {
+function clusterHits(st, n, by) {
   const T = {
     2: [1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2], 4: [1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4], 5: [1, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5],
     6: [2, 2, 3, 3, 4, 4, 4, 5, 5, 6, 6], 10: [3, 3, 4, 6, 6, 6, 6, 8, 8, 10, 10], 15: [5, 5, 6, 9, 9, 9, 9, 12, 12, 15, 15],
     20: [6, 6, 9, 12, 12, 12, 12, 16, 16, 20, 20],
   };
-  const r = roll2d6(st);
+  const r = Math.min(12, roll2d6(st) + (hasAbility(by, 'cluster') ? 1 : 0));
   return (T[n] || T[6])[r - 2];
 }
 
@@ -1294,7 +1356,7 @@ function landHits(st, w, tgt, dir, shot, ev, by) {
   const W = WEAPONS[w.t];
   let volley = 0;
   if (W.kind === 'm') {
-    const n = clusterHits(st, W.n);
+    const n = clusterHits(st, W.n, by);
     shot.missiles = n;
     if (W.lrm) {
       let left = n * w.dmg;
@@ -1380,7 +1442,7 @@ function groupDamage(st, tgt, total, pick, rear, ev, by) {
 // Piloting roll to hit; the target takes tonnage/10 x 3 to the upper body, the attacker
 // tonnage/5 to its own legs, and both must keep their balance. A miss means the attacker
 // crashes to the ground as if it fell two levels.
-export const dfaDamage = (m) => Math.ceil(m.tons / 10) * 3;
+export const dfaDamage = (m) => Math.ceil(m.tons / 10) * 3 + (hasAbility(m, 'melee') ? 1 : 0);
 export const dfaSelfDamage = (m) => Math.ceil(m.tons / 5);
 function deathFromAbove(st, m, tgt, th, ev) {
   m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
@@ -1415,10 +1477,10 @@ function physical(st, m, tgt, kind, th, ev) {
     const arm = bestPunchArm(m);
     dmg = Math.ceil(m.tons / 10);
     const ah = actuCount(m, arm === 4 ? [30, 31] : [34, 35]);
-    dmg = Math.max(1, Math.floor(dmg / (1 + ah)));
+    dmg = Math.max(1, Math.floor(dmg / (1 + ah))) + (hasAbility(m, 'melee') ? 1 : 0);
     loc = punchLoc(st, dir);
   } else {
-    dmg = Math.ceil(m.tons / 5);
+    dmg = Math.ceil(m.tons / 5) + (hasAbility(m, 'melee') ? 1 : 0);
     loc = kickLoc(st, tgt, dir);
   }
   ev.push({ k: 'melee', id: m.id, target: tgt.id, kind, hit, tn: th.tn, roll: r, dmg, loc });

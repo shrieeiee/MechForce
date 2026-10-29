@@ -21,8 +21,12 @@ export const PUBLIC_URL = 'https://shrieeiee.github.io/MechForce/';
 import { native, isCapacitor, servedByHost, secureBrowser, platformName, canHost, canQuit, discover } from './platform.js';
 import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mechBV, CLIMATE } from '../core/data.js';
 import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
-import { totalArmor, maxArmor } from '../core/rules.js';
+import { totalArmor, maxArmor, pilotingTN, reactorBlast, SELF_DESTRUCT_TN } from '../core/rules.js';
 import { loadMaps } from './mapstore.js';
+import { showBarracks, abilityTip, skillTip, statusOf } from './barracks.js';
+import { loadRoster, saveRoster, fitPilots, battleDone, markBattle } from './pilotstore.js';
+import { portraitSVG } from './portrait.js';
+import { applyBattle, restBattle, ABILITIES, RANKS } from '../core/pilots.js';
 import { showEditor } from './editor.js';
 
 // ------------------------------------------------------------------ boot
@@ -107,6 +111,7 @@ class App {
   modalAction(a) {
     const m = this.modal;
     if (m.onTab && (a === 'lb' || a === 'rb' || a === 'left' || a === 'right')) { m.onTab(a === 'rb' || a === 'right' ? 1 : -1); return; }
+    if (m.cycle && (a === 'left' || a === 'right')) { m.cycle(a === 'right' ? 1 : -1); return; }
     if (m.manual && (a === 'up' || a === 'down')) { const b = $('.man-body', m.el); if (b) b.scrollBy({ top: a === 'down' ? 120 : -120, behavior: 'smooth' }); return; }
     if (['up', 'down', 'left', 'right'].includes(a)) { m.nav.move(a); return; }
     if (a === 'confirm') { if (m.nav.activate()) sfx('ui-ok'); return; }
@@ -248,6 +253,7 @@ class App {
       case 'lobby': {
         this.lobby = msg.lobby;
         this.isHost = msg.lobby.host === this.session.myId;
+        this.autoPilots();
         if (this.screen === 'lobby') this.renderScreen();
         else if (!msg.lobby.inGame && this.screen !== 'bay' && this.screen !== 'battle') this.showLobby();
         break;
@@ -380,6 +386,7 @@ class App {
       { k: 'join', label: 'Join Game', hint: 'Find a host or enter an address', fn: () => this.showJoin() },
       { k: 'hotseat', label: 'Hotseat', hint: 'Pass the controller', fn: () => this.startLocal('hotseat') },
       { k: 'bay', label: 'Mech Bay', hint: `${MECHS.length} original designs`, fn: () => this.showBay(null) },
+      { k: 'barracks', label: 'Barracks', hint: 'Your MechWarriors', fn: () => showBarracks(this, { onExit: () => this.showTitle() }) },
       { k: 'lab', label: 'Mech Lab', hint: 'Design your own mechs', fn: () => this.openLab(null, -1, () => this.showTitle()) },
       { k: 'editor', label: 'Map Editor', hint: 'Build battlefields and defences', fn: () => showEditor(this, { onExit: () => this.showTitle() }) },
       { k: 'manual', label: 'How to Play', hint: 'Turns, aiming, heat, damage', fn: () => this.showManual() },
@@ -519,13 +526,14 @@ class App {
       const card = html(`<div class="slot panel" style="--side:${sl.color}">
         <div class="slot-head"><span class="sw"></span><b>${esc(sl.name)}</b><span class="who">${esc(who)}</span></div>
         ${teamsOn ? `<div class="team-badge t${sl.team}" ${tipAttr(`Team ${sl.team + 1}`, `<p>${esc(mis.goal[mis.id === 'generic' ? 0 : sl.team])}</p><p>Forces on the same team share a deployment edge, can't shoot each other and win together.</p>`)}>Team ${sl.team + 1}${mis.id !== 'generic' ? ` · ${esc(mis.goal[sl.team].split(/[.:]/)[0])}` : ''}</div>` : ''}
-        <div class="lance-list">${sl.lance.map((e) => `<div><span>${typeof e === 'object' ? '★ ' : ''}${esc(entryName(e))}</span><span class="num faint">${entryTons(e)}t</span></div>`).join('') || '<div class="faint">No mechs selected</div>'}</div>
+        <div class="lance-list">${sl.lance.map((e, k) => { const pp = (sl.pilots || [])[k]; return `<div><span>${typeof e === 'object' ? '★ ' : ''}${esc(entryName(e))}${pp ? ` <span class="pilot-tag" ${tipAttr(pp.name, `<p>${esc(pp.full || pp.name)} — gunnery ${pp.gun}, piloting ${pp.pil}.</p>${pp.abilities.map(abilityTip).join('')}`)}>${portraitSVG(pp.portrait || {}, { size: 16, color: sl.color })} ${esc(pp.name)} <span class="faint">${pp.gun}/${pp.pil}</span></span>` : ''}</span><span class="num faint">${entryTons(e)}t</span></div>`; }).join('') || '<div class="faint">No mechs selected</div>'}</div>
         <div class="tons-bar ${tons > L.settings.tonnage ? 'over' : ''}"><s style="width:${Math.min(100, tons / L.settings.tonnage * 100)}%"></s></div>
         <div class="dim num" style="font-size:14px">${tons} / ${L.settings.tonnage} tons${remote && sl.ctrl !== 'ai' && sl.ctrl !== 'open' ? ` · <span class="ready-chip ${sl.ready ? 'on' : 'off'}">${sl.ready ? 'Ready' : 'Not ready'}</span>` : ''}</div>
         <div class="stack acts"></div></div>`);
       const acts = $('.acts', card);
       const addBtn = (key, label, fn) => { const b = html(`<div class="btn nav" data-key="${key}">${esc(label)}</div>`); b.addEventListener('click', fn); acts.appendChild(b); };
       if (mine || (this.isHost && sl.ctrl === 'ai')) addBtn(`lance-${i}`, mine ? 'Choose mechs' : 'Choose computer mechs', () => this.showBay({ side: i, lance: sl.lance.slice(), limit: L.settings.tonnage, max: L.settings.lanceSize }));
+      if (mine && sl.lance.length) addBtn(`pilots-${i}`, loadRoster().length ? 'Assign pilots' : 'Recruit pilots…', () => (loadRoster().length ? this.assignPilots(i) : showBarracks(this, { onExit: () => this.showLobby() })));
       if (!mine && (sl.ctrl === 'open' || sl.ctrl === 'ai') && (remote || this.localKind === 'hotseat' || L.slots.length > 2)) addBtn(`take-${i}`, 'Command this side', () => this.session.send({ t: 'slot', side: i, ctrl: 'me' }));
       if (this.isHost && sl.ctrl !== 'ai' && (remote || L.slots.filter((s) => s.ctrl === me).length > 1)) addBtn(`ai-${i}`, 'Hand to computer', () => this.session.send({ t: 'slot', side: i, ctrl: 'ai' }));
       if (this.isHost && remote && sl.ctrl === 'ai') addBtn(`open-${i}`, 'Open for a player', () => this.session.send({ t: 'slot', side: i, ctrl: 'open' }));
@@ -537,6 +545,87 @@ class App {
     if (this.isHost) startBtn.addEventListener('click', () => this.session.send({ t: 'start' }));
     settingsEl.prepend(startBtn);
     this.mount(el, [{ a: 'confirm', label: 'Select' }, this.isHost ? { a: 'x', label: 'Start' } : null, { a: 'back', label: 'Leave' }].filter(Boolean));
+  }
+
+  // ---- pilots in the lobby: picks are pilot ids per lance position, per side
+  autoPilots() {
+    const L = this.lobby;
+    if (!L || L.inGame || !this.session) return;
+    this.pilotPicks = this.pilotPicks || {};
+    const roster = loadRoster();
+    L.slots.forEach((sl, side) => {
+      if (sl.ctrl !== this.session.myId) { delete this.pilotPicks[side]; return; }
+      const fit = fitPilots(roster);
+      const used = new Set(Object.entries(this.pilotPicks).filter(([s2]) => +s2 !== side).flatMap(([, a]) => a).filter(Boolean));
+      let picks = this.pilotPicks[side];
+      const sent = (sl.pilots || []).map((p) => (p ? p.pid : null));
+      if (!picks) picks = sent.some(Boolean) ? sent : [];
+      // keep only fit, unique pilots; fill new lance places with the next fit pilots
+      picks = picks.slice(0, sl.lance.length).map((pid, k, arr) => (pid && fit.some((p) => p.id === pid) && !used.has(pid) && arr.indexOf(pid) === k ? pid : null));
+      const fresh = this.pilotPicks[side] === undefined;
+      while (picks.length < sl.lance.length) picks.push(null);
+      if (fresh) for (let k = 0; k < picks.length; k++) if (!picks[k]) picks[k] = (fit.find((p) => !used.has(p.id) && !picks.includes(p.id)) || {}).id || null;
+      this.pilotPicks[side] = picks;
+      if (JSON.stringify(picks) !== JSON.stringify(sent.slice(0, sl.lance.length).concat(Array(Math.max(0, sl.lance.length - sent.length)).fill(null)))) this.sendPilots(side);
+    });
+  }
+  sendPilots(side) {
+    const roster = loadRoster();
+    const picks = (this.pilotPicks && this.pilotPicks[side]) || [];
+    this.session.send({ t: 'pilots', side, pilots: picks.map((pid) => { const p = roster.find((x) => x.id === pid); return p ? { pid: p.id, name: p.name, callsign: p.callsign, gun: p.gun, pil: p.pil, abilities: p.abilities, portrait: p.portrait } : null; }) });
+  }
+  assignPilots(side) {
+    const L = this.lobby;
+    const sl = L.slots[side];
+    const roster = loadRoster();
+    const picks = (this.pilotPicks[side] || []).slice();
+    while (picks.length < sl.lance.length) picks.push(null);
+    const usedElsewhere = () => new Set(Object.entries(this.pilotPicks).filter(([s2]) => +s2 !== side).flatMap(([, a]) => a).filter(Boolean));
+    const opts = (k) => [null, ...fitPilots(roster).map((p) => p.id).filter((id) => !usedElsewhere().has(id) && (picks[k] === id || !picks.includes(id)))];
+    const render = () => {
+      const el = html(`<div class="modal panel wide pilot-assign"><div class="eyebrow">${esc(sl.name)}</div><h2>Assign pilots</h2>
+        <div class="stack rows"></div>
+        <p class="faint sm">Only fit MechWarriors can fight. Without one, a mech gets a regular rookie (gunnery 4, piloting 5) who isn't saved.</p>
+        <div class="row wrap"><div class="btn primary nav" data-key="done">Done</div><div class="btn nav" data-key="barracks">Barracks…</div></div></div>`);
+      const rows = $('.rows', el);
+      sl.lance.forEach((e, k) => {
+        const p = roster.find((x) => x.id === picks[k]);
+        const row = html(`<div class="btn nav pa-row" data-key="pa-${k}" data-k="${k}">${portraitSVG(p ? p.portrait : {}, { size: 34, color: sl.color })}
+          <span class="grow"><b>${esc(entryName(e))}</b><br><span class="dim sm">${p ? `${esc(p.callsign)} · ${esc(RANKS(p))} · G${p.gun}/P${p.pil}${p.abilities.length ? ' · ' + p.abilities.map((a) => ABILITIES[a].name).join(', ') : ''}` : 'Rookie (not saved)'}</span></span><span class="val arrows"></span></div>`);
+        row.addEventListener('click', () => cycle(k, 1));
+        rows.appendChild(row);
+      });
+      $('[data-key=done]', el).addEventListener('click', () => { this.closeModal(); this.pilotPicks[side] = picks; this.sendPilots(side); });
+      $('[data-key=barracks]', el).addEventListener('click', () => { this.closeModal(); this.pilotPicks[side] = picks; this.sendPilots(side); showBarracks(this, { onExit: () => this.showLobby() }); });
+      const keep = this.modal && this.modal.nav.cur && this.modal.nav.cur.dataset.key;
+      this.openModal(el, { onBack: () => { this.closeModal(); this.pilotPicks[side] = picks; this.sendPilots(side); }, prompts: [{ a: 'confirm', label: 'Change pilot' }, { a: 'back', label: 'Done' }] });
+      this.modal.onTab = null;
+      this.modal.cycle = (d) => { const c = this.modal.nav.cur; if (c && c.dataset.k !== undefined) cycle(+c.dataset.k, d); };
+      if (keep) { const b = $(`[data-key="${keep}"]`, el); if (b) this.modal.nav.set(b, false); }
+    };
+    const cycle = (k, d) => { const o = opts(k); picks[k] = o[(o.indexOf(picks[k]) + d + o.length) % o.length]; sfx('ui-move'); render(); };
+    render();
+  }
+
+  // After a battle: experience, wounds and deaths for this device's pilots
+  recordPilots(st) {
+    if (!st.over || !st.gid || battleDone(st.gid)) return null;
+    const roster = loadRoster();
+    if (!roster.length) return null;
+    const out = [];
+    const fought = new Set();
+    for (const m of st.mechs) {
+      const p = m.pilot.pid && roster.find((x) => x.id === m.pilot.pid);
+      if (!p || !this.battle.mySides().includes(m.side)) continue;
+      fought.add(p.id);
+      const r = applyBattle(p, st, m, st.gid);
+      if (r) out.push({ p, m, ...r });
+    }
+    if (!out.length) return null;
+    for (const p of roster) if (!fought.has(p.id)) restBattle(p);
+    saveRoster(roster);
+    markBattle(st.gid);
+    return out;
   }
 
   // ---- mech bay
@@ -807,12 +896,16 @@ class App {
     sfx('ui-ok');
     const st = this.battle.state;
     const mineAlive = st && this.battle.mySides().some((s) => !st.sides[s].conceded);
+    const actId = this.battle.myActiveMech();
+    const act = actId !== null && actId !== undefined ? st.mechs[actId] : null;
     const el = html(`<div class="modal panel"><div class="eyebrow">Paused${this.session && !this.session.local ? ' · the battle keeps running' : ''}</div><h2>Menu</h2>
       <div class="stack">
         <div class="btn nav" data-key="resume">Resume</div>
         <div class="btn nav" data-key="manual">How to play</div>
         <div class="btn nav" data-key="log">Battle log</div>
         <div class="btn nav" data-key="settings">Settings</div>
+        ${act ? `<div class="btn nav" data-key="eject" ${tipAttr('Eject', `<p>${esc(act.pilot.name)} abandons the ${esc(act.design)}: it's out of the battle, and the pilot rolls piloting (${pilotingTN(act)}+) to land safely — a bad landing is a wound.</p>`)}>Eject from the ${esc(act.design)}</div>
+        <div class="btn nav danger" data-key="sd" ${tipAttr('Self-destruct', `<p>Override the reactor safeties (works on ${SELF_DESTRUCT_TN}+, otherwise the turn ends) and eject. The ${esc(act.design)} explodes like a reactor breach: ${reactorBlast(act)} damage to everything next to it and ${Math.floor(reactorBlast(act) / 2)} two hexes away — friends included.</p>`)}>Self-destruct</div>` : ''}
         ${mineAlive && !st.over ? '<div class="btn nav" data-key="concede">Withdraw from battle</div>' : ''}
         <div class="btn nav" data-key="quit">Quit to title</div></div></div>`);
     const close = () => this.closeModal();
@@ -824,6 +917,10 @@ class App {
       this.openModal(log, { onBack: () => this.closeModal() });
     });
     $('[data-key=settings]', el).addEventListener('click', () => { this.closeModal(); this.settingsOverlay(); });
+    let armed = null;
+    const confirmCmd = (key, type, msg) => { const b = $(`[data-key=${key}]`, el); if (!b) return; b.addEventListener('click', () => { if (armed !== key) { armed = key; b.textContent = msg; sfx('alarm'); return; } close(); this.battle.send({ type, id: act.id }); }); };
+    confirmCmd('eject', 'eject', 'Press again to eject');
+    confirmCmd('sd', 'selfdestruct', 'Press again — this destroys your mech');
     const cq = $('[data-key=concede]', el);
     if (cq) cq.addEventListener('click', () => { this.session.send({ t: 'concede' }); close(); });
     $('[data-key=quit]', el).addEventListener('click', () => { close(); this.endSession(); this.showTitle(); });
@@ -853,18 +950,26 @@ class App {
       return `<tr class="${teamOfS(i) === wTeam ? 'won' : ''}"><td style="color:${s.color};font-weight:700">${esc(s.name)}${st.teams && st.teams.some((t) => t.members.length > 1) ? ` <span class="faint">· Team ${teamOfS(i) + 1}</span>` : ''}</td><td class="num">${alive}/${ms.length}</td><td class="num">${dmg}</td><td class="num">${kills}</td><td class="num">${acc}%</td></tr>`;
     }).join('');
     const mvp = st.mechs.slice().sort((a, b) => b.stats.dmg + b.stats.kills * 30 - (a.stats.dmg + a.stats.kills * 30))[0];
+    const deb = this.recordPilots(st);
+    const debrief = deb ? `<div class="eyebrow">MechWarriors</div><div class="debrief">${deb.map((d) => `<div class="db-row">${portraitSVG(d.p.portrait, { size: 40, dead: d.fate === 'killed', color: st.sides[d.m.side].color })}
+      <div class="grow"><b>${esc(d.p.callsign)}</b> <span class="faint">${esc(d.m.design)}</span><div class="sm ${d.fate === 'killed' ? 'bad-t' : d.fate === 'ok' ? 'ok-t' : 'warn'}">${d.fate === 'killed' ? 'Killed in action' : d.fate === 'ejected' ? 'Ejected' + (d.rest ? ` · recovering for ${d.rest} battle${d.rest > 1 ? 's' : ''}` : '') : d.fate === 'wounded' ? `Wounded · recovering for ${d.rest} battle${d.rest > 1 ? 's' : ''}` : 'Unhurt'}</div></div>
+      <div class="num xp" ${tipAttr('Experience', d.xp.parts.map(([k, v]) => `<div>${esc(k)}: +${v}</div>`).join(''))}>+${d.xp.total} XP</div></div>`).join('')}</div>` : '';
     const canRematch = this.isHost;
     const el = html(`<div class="modal wide panel" style="border-top:3px solid ${w && wTeam >= 0 ? tColor(wTeam) : 'var(--amber)'}">
       <div class="eyebrow">${esc(MISSIONS.find((m) => m.id === st.mission).name)} · ${st.round} rounds · T+${(st.round - 1) * 50}s</div>
       <h2 style="font-size:40px">${esc(title)}</h2><p class="brief">${esc(w ? w.reason : '')}</p>
       <div style="overflow-x:auto"><table class="results-table"><tr><th>Force</th><th>Mechs left</th><th>Damage dealt</th><th>Kills</th><th>Accuracy</th></tr>${rows}</table></div>
+      ${debrief}
       ${mvp ? `<div class="dim">Top performer: <b style="color:var(--ink)">${esc(mvp.design)}</b> (${esc(mvp.pilot.name)}) — ${mvp.stats.dmg} damage, ${mvp.stats.kills} kill${mvp.stats.kills === 1 ? '' : 's'}</div>` : ''}
       <div class="stack">${canRematch ? '<div class="btn primary nav" data-key="again">Back to lobby</div>' : '<div class="faint">Waiting for the host…</div>'}
+      ${deb ? '<div class="btn nav" data-key="barracks">Barracks — spend experience</div>' : ''}
       <div class="btn nav" data-key="field">View battlefield</div>
       <div class="btn nav" data-key="quit">Quit to title</div></div></div>`);
     const again = $('[data-key=again]', el);
     if (again) again.addEventListener('click', () => { this.closeModal(); this.session.send({ t: 'lobby' }); });
     $('[data-key=field]', el).addEventListener('click', () => { this.closeModal(); });
+    const bk = $('[data-key=barracks]', el);
+    if (bk) bk.addEventListener('click', () => { this.closeModal(); this.endSession(); showBarracks(this, { onExit: () => this.showTitle() }); });
     $('[data-key=quit]', el).addEventListener('click', () => { this.closeModal(); this.endSession(); this.showTitle(); });
     this.openModal(el, { onBack: () => this.closeModal(), prompts: [{ a: 'confirm', label: 'Select' }] });
   }

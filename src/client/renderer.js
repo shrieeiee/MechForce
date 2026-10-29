@@ -970,6 +970,11 @@ export class Renderer {
           break;
         }
         case 'blast': await this.animBlast(e, sp); break;
+        case 'eject': if (v) await this.animEject(v, e, sp); break;
+        case 'selfdestruct': if (v) {
+          if (e.ok) { this.float(v, 'REACTOR OVERLOAD', 'crit'); sfx('alarm'); const p = this.bodyPoint(v, 0.1); for (let i = 0; i < 4; i++) { this.flash(p, 0.6 + i * 0.3); await sleep(140 / sp); } }
+          else { this.float(v, 'SAFETIES HOLD', 'info'); sfx('ui-err'); await sleep(300 / sp); }
+        } break;
         case 'blasthit': if (v) this.float(v, String(e.dmg), 'dmg'); break;
         case 'boom': if (v) { const p = this.bodyPoint(v, 0.2); this.explosion(p, 1.6); sfx('boom', { size: 1.3, pan: this.panOf(p) }); await sleep(400 / sp); } break;
         case 'locgone': if (v) { const p = this.bodyPoint(v); this.explosion(p, 0.8); this.spawn(p, { n: 16, color: '#ffe08a', size: 0.12, speed: 5, life: 0.5, gravity: 9, grow: 0 }); } break;
@@ -1238,6 +1243,38 @@ export class Renderer {
       await this.tween(260 / sp, (k) => { root.position.lerpVectors(land, p0, k); });
     }
     root.position.copy(p0);
+  }
+
+  // The cockpit pod rockets clear, pops a parachute and drifts down beside the wreck
+  async animEject(v, e, sp) {
+    const head = v.model.root.position.clone(); head.y += v.model.height * 0.92;
+    const pod = new THREE.Group();
+    const shell = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.16, 4, 8), new THREE.MeshStandardMaterial({ color: '#c9ced3', metalness: 0.4, roughness: 0.5 }));
+    pod.add(shell);
+    const chute = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: e.ok ? '#ff8a3d' : '#c0c0c0', side: THREE.DoubleSide, roughness: 0.9 }));
+    chute.position.y = 0.75; chute.scale.setScalar(0.01); pod.add(chute);
+    const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.1, 0), new THREE.Vector3(-0.38, 0.72, 0), new THREE.Vector3(0, 0.1, 0), new THREE.Vector3(0.38, 0.72, 0), new THREE.Vector3(0, 0.1, 0), new THREE.Vector3(0, 0.72, 0.38)]), new THREE.LineBasicMaterial({ color: '#dddddd' }));
+    lines.visible = false; pod.add(lines);
+    pod.position.copy(head);
+    this.fxGroup.add(pod);
+    sfx('jet', { pan: this.panOf(head) });
+    this.float(v, e.killed ? 'PILOT LOST' : e.ok ? 'EJECTED' : 'HARD LANDING', e.killed ? 'kill' : e.ok ? 'info' : 'crit');
+    const side = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize().multiplyScalar(1.2);
+    const peak = head.clone().add(new THREE.Vector3(0, 3.2, 0)).addScaledVector(side, 0.4);
+    await this.tween(420 / sp, (k) => {
+      pod.position.lerpVectors(head, peak, 1 - (1 - k) * (1 - k));
+      if (Math.random() < 0.7) this.spawn(pod.position.clone(), { n: 1, color: '#ffb347', size: 0.25, speed: 0.3, life: 0.4 });
+      if (Math.random() < 0.5) this.spawn(pod.position.clone(), { n: 1, color: '#6b6b6b', size: 0.35, speed: 0.2, life: 1.2, normal: true, opacity: 0.5, grow: 2 });
+    });
+    lines.visible = true;
+    const ground = v.model.root.position.clone().addScaledVector(side, e.ok ? 1.4 : 0.9); ground.y += 0.15;
+    await this.tween((e.ok ? 900 : 500) / sp, (k) => {
+      chute.scale.setScalar(Math.min(1, k * 4) * (e.ok ? 1 : 0.55));
+      pod.position.lerpVectors(peak, ground, k);
+      pod.rotation.z = Math.sin(k * 9) * 0.12;
+    });
+    await sleep(400 / sp);
+    this.tween(500 / sp, (k) => { pod.scale.setScalar(1 - k); }).then(() => { this.fxGroup.remove(pod); });
   }
 
   // Reactor breach or ammo blast: fireball, a shockwave ring across the ground, debris

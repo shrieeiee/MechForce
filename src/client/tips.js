@@ -3,6 +3,7 @@
 //   mouse: hover · controller/keyboard: when the element has focus · touch: long-press.
 import { WEAPONS, TERRAIN, STRUCTS, LOADOUTS } from '../core/data.js';
 import { chance } from '../core/rng.js';
+import { ABILITIES } from '../core/pilots.js';
 import { esc } from './ui.js';
 import { input } from './input.js';
 
@@ -212,7 +213,7 @@ export function terrainTip(tn) {
 
 export function pilotTip(m, mods) {
   const extra = mods && mods.length ? `<p>Staying upright: piloting ${m.pilot.pil} ${mods.map(([l, v]) => `${v > 0 ? '+' : '−'}${Math.abs(v)} ${esc(l.toLowerCase())}`).join(', ')}.</p>` : '';
-  return extra + `<p>${esc(m.pilot.name)} has taken <b>${m.pilot.hits} of 6</b> injuries. Injuries come from head hits, falls, ammo explosions and overheating with damaged life support.</p><p>Each injury risks knocking the pilot unconscious (the mech stops until they wake). Six injuries kill the pilot.</p><p>Gunnery ${m.pilot.gun} (lower is better at shooting) · Piloting ${m.pilot.pil} (lower is better at staying upright and melee).</p>`;
+  return extra + `<p>${esc(m.pilot.name)} has taken <b>${m.pilot.hits} of 6</b> injuries. Injuries come from head hits, falls, ammo explosions and overheating with damaged life support.</p><p>Each injury risks knocking the pilot unconscious (the mech stops until they wake). Six injuries kill the pilot.</p><p>Gunnery ${m.pilot.gun} (lower is better at shooting) · Piloting ${m.pilot.pil} (lower is better at staying upright and melee).</p>${(m.pilot.abilities || []).map((a) => `<p><b>${esc(ABILITIES[a].name)}</b>: ${esc(ABILITIES[a].text)}</p>`).join('')}${m.pilot.pid ? '<p class="faint">A MechWarrior from the barracks: experience, wounds and death carry over.</p>' : ''}`;
 }
 
 export const ARMOR_TIP = '<p>Each block is one part of the mech; the number is its armour. Green is healthy, red is nearly stripped, dark red means armour is gone and the internal structure is exposed — hits there can cause critical damage.</p><p>The small row marked REAR is the back armour of the torso: much thinner, so shots from behind hurt more. Losing the head or center torso destroys the mech.</p><p>Four-legged mechs show four legs where the arms would be; a tripod has a third leg in the middle.</p>';
@@ -302,6 +303,13 @@ export const MANUAL = [
     <p>A faded marker with a <b>?</b> shows where you last saw each enemy and which way it was facing. They won't be there for long.</p>
     <p>Firing gives a mech away: whoever it shot at can see it for the rest of the round. Wrecks stay visible.</p>
     <p>The computer plays by the same rules. Online, each player's device is only sent what their side can see; in hotseat games the view switches with each player's turn. When the battle ends, everything is revealed.</p>` },
+  { k: 'pilots', t: 'MechWarriors', body: `
+    <p>In the <b>Barracks</b> (main menu) you recruit MechWarriors who stay with you from battle to battle. The <b>character generator</b> sets their look, name, callsign and <b>background</b> — military academy, noble heir, mercenary, Clan warrior, pirate, militia, farmworld jockey or arena gladiator — which decides their starting gunnery and piloting and their first special ability.</p>
+    <p>In the battle setup, <b>Assign pilots</b> puts them in your mechs (fit pilots are filled in for you). Mechs without one get an unsaved rookie (gunnery 4, piloting 5).</p>
+    <p><b>Experience</b>: 1 for taking part, 1 for surviving, 2 for a win, 2 per kill, 1 per 25 damage (up to 4), 2 for carrying the objective out. Spend it in the Barracks on better gunnery or piloting, or on up to three <b>special abilities</b> (Sniper, Jumping Jack, Melee Specialist, Hot Dog, Iron Man, Maneuvering Ace, Tactical Genius, Cluster Hitter, and weapon specialists).</p>
+    <p><b>Wounds and death</b>: a wounded pilot sits out a battle for every two hits; one who ejected sits out at least one. Pilots die only when the head or cockpit is destroyed, they take six hits, or they're still aboard when the reactor goes. Dead pilots stay on the memorial.</p>
+    <p><b>Ejecting</b>: when a mech is destroyed the pilot ejects automatically (a piloting roll; a bad landing is a wound). An unconscious pilot can't, unless an ammo explosion fires the automatic ejection system. You can also eject on purpose from the menu (P) during a mech's turn.</p>
+    <p><b>Self-destruct</b> (menu, during a mech's turn): override the reactor safeties (works on 5+) and eject — the mech explodes like a reactor breach, hurting everything within two hexes, friends included. The computer does this too when a crippled mech is surrounded.</p>` },
   { k: 'structures', t: 'Defences & buildings', body: `
     <p><b>Gun emplacements</b> and <b>bunkers</b> belong to a side and fire on their own at the end of every round, at the best target in range and sight (gunnery 4, and they never move: +0 for movement). An emplacement mounts one weapon and turns to face anything; a bunker is hardened (it takes half damage) and mounts two. They run out of ammunition like mechs do.</p>
     <p><b>Buildings</b> and <b>walls</b> are unarmed cover: they block movement and sight like a hill of their height. Buildings can burn.</p>

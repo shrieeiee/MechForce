@@ -44,6 +44,12 @@ Initiative each round; sides alternate activating one mech at a time. Walk / run
 
 Turn on **Fog of war** in the battle setup and each side only sees enemy mechs one of its own mechs can see (line of sight, or standing next to it). Unseen enemies move in secret; a faded "?" marker shows where each was last spotted, until you can see that spot is empty. Firing gives a mech away to the side it shot at for the rest of the round, wrecks stay visible, and everything is revealed when the battle ends. The computer plays by the same rules. Online, the host only sends each player what their side can see; on a hotseat device the view switches with each player's turn.
 
+## MechWarriors, ejection and self-destruct
+
+The **Barracks** keep a roster of persistent MechWarriors. The character generator builds a portrait (skin, face, hair, eyes, marks, headgear…), name and callsign, and a **background** that sets starting gunnery/piloting and a first special ability. Assign pilots to your mechs in the battle setup; after each battle they earn experience (participation, survival, victory, kills, damage, objectives) to spend on gunnery, piloting and up to three special abilities after BattleTech's Campaign Operations: Sniper, Jumping Jack, Melee Specialist, Hot Dog, Iron Man, Maneuvering Ace, Tactical Genius, Cluster Hitter and weapon specialists. Wounded pilots sit out battles to heal; deaths are rare (head/cockpit destroyed, six hits, or aboard when the reactor goes).
+
+When a mech is destroyed its pilot tries to **eject** (piloting roll — a bad landing is a wound); you can also eject on purpose or **self-destruct** (override the reactor on 5+, eject, and blow the mech like a reactor breach) from the menu during a mech's turn. The computer abandons crippled mechs and sometimes self-destructs when surrounded.
+
 ## Map editor, defences and buildings
 
 **Map Editor** (main menu) builds your own battlefields: paint clear ground, woods, rough and water, raise and lower hills (levels 0–5), and place **gun emplacements** (one weapon), **bunkers** (two weapons, hardened), **buildings** and **walls**. Choose which side each emplacement fights for and what it mounts (AC/10, AC/20, LRM 20, twin SRM 6, twin large lasers, plasma cannon, machine guns). Mirror mode paints both halves at once — *Rotate* gives a perfectly fair West-vs-East map. Maps are saved on the device and picked under **Map** in the battle setup; the host sends the map to everyone, so they work online too.
