@@ -37,6 +37,12 @@ export function fogView(st, teams) {
     const keep = v.logIds.map((id) => id < 0 || !hidden.has(id));
     v.log = v.log.filter((_, i) => keep[i]); v.logIds = v.logIds.filter((_, i) => keep[i]);
   }
+  // infantry and vehicles out of sight: off the map (wrecks stay)
+  for (const u of v.units || []) {
+    if (u.dead || teams.includes(u.team)) continue;
+    const real = st.units[u.id];
+    if (!teams.some((t) => visibleTo(st, t, real))) { u.hidden = true; u.x = -1; u.y = -1; }
+  }
   // an objective carried out of sight goes with its carrier
   if (v.item && v.item.carrier !== null && v.item.carrier !== undefined && hidden.has(v.item.carrier)) { v.item.x = -1; v.item.y = -1; v.item.hiddenCarrier = true; }
   return v;
@@ -47,8 +53,16 @@ export function fogEvents(st, events, teams) {
   if (!st || !st.fog || !teams || !teams.length) return events;
   const vis = new Map(st.mechs.map((m) => [m.id, seenBy(st, teams, m)]));
   const ownTeam = (m) => teams.includes(m.team ?? m.side);
+  const uVis = (u) => u.dead || teams.some((t) => visibleTo(st, t, u));
   const out = [];
   for (const e of events) {
+    if (e.k === 'ushot' || e.k === 'umove' || e.k === 'uhit' || e.k === 'umotive') {
+      const u = st.units[e.uid];
+      const tgtOwn = e.target !== undefined && st.mechs[e.target] && ownTeam(st.mechs[e.target]);
+      if (u && (teams.includes(u.team) || uVis(u) || tgtOwn || (e.k === 'umove' && teams.some((t) => hexSeenBy(st, t, e.from.x, e.from.y))))) out.push(e);
+      continue;
+    }
+    if (e.k === 'units') { out.push(e); continue; }
     if (e.k === 'sshot') { const t = st.mechs[e.target]; if (!t || ownTeam(t) || vis.get(t.id)) out.push(e); continue; }
     const m = e.id !== undefined ? st.mechs[e.id] : null;
     if (!m || ownTeam(m)) { out.push(e); continue; }
@@ -60,7 +74,7 @@ export function fogEvents(st, events, teams) {
       continue;
     }
     if (e.k === 'destroyed' || e.k === 'win') { out.push(e); continue; }
-    if (e.k === 'shot' && e.starget !== undefined) { if (vis.get(e.id)) out.push(e); continue; }
+    if (e.k === 'shot' && (e.starget !== undefined || e.utarget !== undefined)) { if (vis.get(e.id)) out.push(e); continue; }
     if (e.k === 'shot' || e.k === 'melee') { const t = st.mechs[e.target]; if (vis.get(e.id) && t && vis.get(t.id)) out.push(e); continue; }
     if (vis.get(e.id)) out.push(e);
   }

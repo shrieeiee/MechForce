@@ -1,8 +1,8 @@
 import { MECHS as DISK_MECHS } from './mechdata.js';
 import { EXTRA_MECHS } from './extradata.js';
 
-export const VERSION = '1.12.0';
-export const PROTOCOL = 7;
+export const VERSION = '1.13.0';
+export const PROTOCOL = 8;
 
 // Weapon types, in the original program's order.
 // kind: b=ballistic, m=missile, e=energy. n = missiles per volley. snd = sound family
@@ -114,6 +114,24 @@ export const LOADOUTS = {
 export const LOADOUT_IDS = Object.keys(LOADOUTS);
 export const STRUCT_GUNNERY = 4; // automated emplacement crews
 export const TEAM_ZONE_NAMES = ['West', 'East', 'North', 'South'];
+
+// ---- conventional forces: infantry platoons and combat vehicles, after Total Warfare (simplified).
+// Infantry: troopers, damage per trooper at up to `rng` hexes, `fx` = weapon whose look they use.
+// Vehicles: armour + internal structure, weapons by id; motion decides where they can go.
+export const UNITS = {
+  rifle: { name: 'Rifle platoon', inf: true, troops: 28, mp: 1, motion: 'foot', perT: 0.25, rng: 1, fx: 4 },
+  laser: { name: 'Laser platoon', inf: true, troops: 28, mp: 1, motion: 'foot', perT: 0.3, rng: 2, fx: 12 },
+  srm: { name: 'SRM platoon', inf: true, troops: 21, mp: 1, motion: 'foot', perT: 0.45, rng: 3, fx: 9 },
+  jump: { name: 'Jump platoon', inf: true, troops: 21, mp: 3, motion: 'jump', perT: 0.25, rng: 1, fx: 4 },
+  hover: { name: 'Hover scout', tons: 10, mp: 8, motion: 'hover', armor: 24, struct: 5, w: [13] },
+  car: { name: 'Armoured car', tons: 15, mp: 6, motion: 'wheeled', armor: 36, struct: 8, w: [4, 4, 9] },
+  ltank: { name: 'Light tank', tons: 30, mp: 5, motion: 'tracked', armor: 64, struct: 15, w: [11, 13] },
+  tank: { name: 'Battle tank', tons: 50, mp: 4, motion: 'tracked', armor: 104, struct: 25, w: [2, 4] },
+  carrier: { name: 'Missile carrier', tons: 40, mp: 4, motion: 'wheeled', armor: 56, struct: 20, w: [8] },
+};
+export const UNIT_KINDS = Object.keys(UNITS);
+export const UNIT_GUNNERY = 4;
+export const MOTION_NAMES = { foot: 'Foot infantry', jump: 'Jump infantry', hover: 'Hovercraft', wheeled: 'Wheeled', tracked: 'Tracked' };
 
 // ---- climate: heat added (or removed) at the end of every activation, after TacOps'
 // extreme-temperature rule (one heat per 10°C beyond the comfortable range)

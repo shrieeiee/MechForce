@@ -1,7 +1,7 @@
 // Computer opponent. Returns one command at a time for the active AI side.
 import { WEAPONS, TERRAIN } from './data.js';
 import { computeReach, canEndAt, toHit, availableMechs, operational, canAct, lineOfSight, inArc, missionOf,
-  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo, toHitStructure, envHeat, smokeAt, isBurning, defenceTargets, dfaDamage, dfaSelfDamage, pilotingMods, elevOf } from './rules.js';
+  expectedDamage, dissipation, totalArmor, maxArmor, tileOf, toHitUnit, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo, toHitStructure, envHeat, smokeAt, isBurning, defenceTargets, dfaDamage, dfaSelfDamage, pilotingMods, elevOf } from './rules.js';
 import { STRUCTS } from './data.js';
 import { distance, relBearing } from './hex.js';
 import { chance, nextRand } from './rng.js';
@@ -244,6 +244,26 @@ function chooseAttack(st, m) {
       const val = th.p * dmg * (kind === 'kick' ? 0.85 : 1) * (kind === 'dfa' && totalArmor(e) < dmg * 2.5 ? 1.6 : 1) - risk;
       if (val > best.v) best = { v: val, cmd: { type: 'melee', id: m.id, target: e.id, kind } };
     }
+  }
+  // infantry and vehicles shooting at us: worth a volley when no mech is a better target
+  for (const u of (st.units || [])) {
+    if (u.dead || u.hidden || u.x < 0 || u.team === m.team) continue;
+    if (st.fog && !visibleTo(st, m.team ?? m.side, u)) continue;
+    const opts = [];
+    for (const wp of m.weapons) {
+      const th = toHitUnit(st, m, u, wp);
+      if (!th.ok || th.p <= 0.05) continue;
+      // what the weapon really does to this kind of unit
+      const W = WEAPONS[wp.t];
+      const per = u.inf ? (wp.t === 4 ? 7 : wp.t === 15 ? 10.5 : W.kind === 'm' ? Math.ceil(expectedDamage(wp, 1) / 5) : Math.ceil(wp.dmg / 10)) * (TERRAIN[tileOf(st, u.x, u.y)].woods ? 1 : 2) : expectedDamage(wp, 1);
+      opts.push({ w: wp, ed: per * th.p, heat: wp.heat });
+    }
+    if (!opts.length) continue;
+    const v = bestVolley(opts, budget);
+    const left = u.inf ? u.troops : u.armor + u.struct;
+    const threat = u.weapons.some((w) => w.ok && w.ammo !== 0) && distance(m.x, m.y, u.x, u.y) <= Math.max(...u.weapons.map((w) => w.rng)) + 2;
+    const val = (u.inf ? v.dmg / left * 25 : v.dmg) * (threat ? 0.7 : 0.35) * (left <= v.dmg * 1.3 ? 1.5 : 1);
+    if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, unit: u.id, weapons: v.picked.map((o) => o.w.i) } };
   }
   // enemy emplacements: worth a volley when no mech is a better target
   for (const s of (st.structures || [])) {

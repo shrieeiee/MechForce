@@ -1,8 +1,8 @@
 import { computeReach, canEndAt, pathFrom, reachKey, toHit, availableMechs, operational, canAct, activeSide, missionOf,
   dissipation, expectedDamage, totalArmor, maxArmor, secondsElapsed, attackDirection,
   moveModes, availMP, canConvert, conversionCost, pilotingMods, isQuadVee, onTracks, MOVE_HEAT,
-  toHitStructure, structureAt, envHeat, envHeatParts, isBurning, smokeAt, dfaDamage, dfaSelfDamage } from '../core/rules.js';
-import { WEAPONS, MISSIONS, CLASS_NAMES, TERRAIN, critName, STRUCTS, LOADOUTS, CLIMATE, TEAM_ZONE_NAMES } from '../core/data.js';
+  toHitStructure, structureAt, envHeat, envHeatParts, isBurning, smokeAt, dfaDamage, dfaSelfDamage, toHitUnit, unitAt, unitStrength } from '../core/rules.js';
+import { WEAPONS, MISSIONS, CLASS_NAMES, TERRAIN, critName, STRUCTS, LOADOUTS, CLIMATE, TEAM_ZONE_NAMES, UNITS, MOTION_NAMES } from '../core/data.js';
 import { neighbor, distance, facingToward, relBearing } from '../core/hex.js';
 import { fogView, fogEvents } from '../core/fog.js';
 import { portraitSVG } from './portrait.js';
@@ -10,7 +10,7 @@ import { $, $$, html, esc, promptBar, toast, banner, paperDoll, FocusNav, glyphH
 import { input } from './input.js';
 import { sfx, music } from './audio.js';
 import { ICON } from './icons.js';
-import { structTip, attr, weaponTip, heatTip, MODE_TIP, moveDefense, turnOrderTip, terrainTip, pilotTip, ARMOR_TIP, statusTip, hitDirTip, brackets, reasonText, modLine, hideTip, tipGC, SHIFT_TIP, CONVERT_TIP, CHASSIS_TIP, chassisName, chassisTag, locAbbr } from './tips.js';
+import { structTip, forceTip, attr, weaponTip, heatTip, MODE_TIP, moveDefense, turnOrderTip, terrainTip, pilotTip, ARMOR_TIP, statusTip, hitDirTip, brackets, reasonText, modLine, hideTip, tipGC, SHIFT_TIP, CONVERT_TIP, CHASSIS_TIP, chassisName, chassisTag, locAbbr } from './tips.js';
 
 const BASE_COLOR = { walk: '#5fd3ff', run: '#ffb23e', jump: '#b98cff', track: '#7ee0a8', cruise: '#7ee0a8', flank: '#ffd166' };
 const BASE_LABEL = { walk: 'Walk', run: 'Run', jump: 'Jump', track: 'Tracks', cruise: 'Cruise', flank: 'Flank' };
@@ -66,6 +66,7 @@ export class Battle {
 
   // ------------------------------------------------------------ lifecycle
   start(state) {
+    this.unitsBanner = false;
     this.perspSide = null;
     this.setFull(state);
     state = this.state;
@@ -73,6 +74,7 @@ export class Battle {
     this.r.buildMap(state.map);
     this.r.syncMechs(state);
     this.r.syncStructures(state);
+    this.r.syncUnits(state);
     this.r.setEnvironment(state);
     this.setExitEdges();
     const mine = this.mySides();
@@ -121,6 +123,7 @@ export class Battle {
     if (e.k === 'log') this.pushFeed(e.text, e.tone, e.side);
     if (e.k === 'round') { banner(`Round ${e.n}`, `T+${(e.n - 1) * 50} seconds`); }
     if (e.k === 'defences') banner('Defences open fire', 'Emplacements and bunkers shoot at the end of every round');
+    if (e.k === 'units' && !this.unitsBanner) { this.unitsBanner = true; banner('Ground forces engage', 'Infantry and vehicles move and fire at the end of every round'); }
     if (e.k === 'turn' && st && !st.over) {
       const s = st.sides[e.side];
       if (this.isMine(e.side)) sfx('turn');
@@ -184,8 +187,10 @@ export class Battle {
   }
 
   // Attack targets are mech ids, or -(structure id + 1) for emplacements and buildings
-  structOf(tid) { return tid < 0 && this.state.structures ? this.state.structures[-tid - 1] : null; }
-  thFor(m, tid, w, opts) { const S = this.structOf(tid); return S ? toHitStructure(this.state, m, S, w, opts) : toHit(this.state, m, this.state.mechs[tid], w, opts); }
+  // target ids: mechs >= 0, structures -(id + 1), infantry and vehicles -(id + 1000)
+  structOf(tid) { return tid < 0 && tid > -1000 && this.state.structures ? this.state.structures[-tid - 1] : null; }
+  unitOf(tid) { return tid <= -1000 && this.state.units ? this.state.units[-tid - 1000] : null; }
+  thFor(m, tid, w, opts) { const S = this.structOf(tid), U = this.unitOf(tid); return S ? toHitStructure(this.state, m, S, w, opts) : U ? toHitUnit(this.state, m, U, w, opts) : toHit(this.state, m, this.state.mechs[tid], w, opts); }
   structSide(S) { const st = this.state; if (S.team < 0) return { color: '#9aa3ad', name: 'Neutral' }; const tm = st.teams[S.team]; return { color: tm ? tm.color : '#9aa3ad', name: tm ? tm.name : TEAM_ZONE_NAMES[S.team] }; }
 
   // ------------------------------------------------------------ modes
@@ -315,6 +320,12 @@ export class Battle {
       for (const w of m.weapons) { const th = toHitStructure(st, m, S, w); if (th.ok) ed += expectedDamage(w, th.p); }
       if (ed > 0) scored.push({ e: { id: -S.id - 1 }, ed: ed * 0.5, can: true, d: distance(m.x, m.y, S.x, S.y) });
     }
+    for (const U of st.units || []) {
+      if (U.dead || U.hidden || U.x < 0 || U.team === (m.team ?? m.side)) continue;
+      let ed = 0;
+      for (const w of m.weapons) { const th = toHitUnit(st, m, U, w); if (th.ok) ed += expectedDamage(w, th.p); }
+      if (ed > 0) scored.push({ e: { id: -U.id - 1000 }, ed: ed * 0.4, can: true, d: distance(m.x, m.y, U.x, U.y) });
+    }
     scored.sort((a, b) => (b.can - a.can) || (b.ed - a.ed) || (a.d - b.d));
     const prev = this.ix.targetId;
     const targets = scored.map((s) => s.e.id);
@@ -329,9 +340,10 @@ export class Battle {
     const ix = this.ix, st = this.state, m = st.mechs[ix.mechId];
     ix.targetId = tid;
     ix.melee = null;
-    const S = this.structOf(tid);
+    const S = this.structOf(tid) || this.unitOf(tid);
     const t = S || st.mechs[tid];
     if (!t) { this.render(); return; }
+    const vid = this.unitOf(tid) ? 'u' + S.id : S ? 's' + S.id : t.id;
     // default selection: every weapon that can fire, trimmed to a sane heat level
     const opts = m.weapons.map((w) => ({ w, th: this.thFor(m, tid, w) })).filter((o) => o.th.ok && o.th.p > 0);
     const budget = dissipation(st, m) - m.heat - (st.act ? st.act.heatGen : 0) + 6;
@@ -341,8 +353,8 @@ export class Battle {
     if (!sel.size && opts.length) sel.add(opts[0].w.i);
     ix.sel = sel;
     this.cursor = { x: t.x, y: t.y };
-    this.r.setTargetLine(m.id, S ? 's' + S.id : t.id, opts.length > 0);
-    this.r.frameMechs(m.id, S ? 's' + S.id : t.id);
+    this.r.setTargetLine(m.id, vid, opts.length > 0);
+    this.r.frameMechs(m.id, vid);
     this.updateCursorOverlay();
     if (!initial) sfx('ui-move');
     this.render();
@@ -350,11 +362,11 @@ export class Battle {
 
   fire() {
     const ix = this.ix, m = this.state.mechs[ix.mechId];
-    const S = this.structOf(ix.targetId);
-    if (ix.melee && !S) { this.send({ type: 'melee', id: m.id, target: ix.targetId, kind: ix.melee }); }
+    const S = this.structOf(ix.targetId), U = this.unitOf(ix.targetId);
+    if (ix.melee && !S && !U) { this.send({ type: 'melee', id: m.id, target: ix.targetId, kind: ix.melee }); }
     else {
       if (!ix.sel || !ix.sel.size) { toast('Select at least one weapon, or end the turn.'); return; }
-      this.send(S ? { type: 'attack', id: m.id, structure: S.id, weapons: [...ix.sel] } : { type: 'attack', id: m.id, target: ix.targetId, weapons: [...ix.sel] });
+      this.send(S ? { type: 'attack', id: m.id, structure: S.id, weapons: [...ix.sel] } : U ? { type: 'attack', id: m.id, unit: U.id, weapons: [...ix.sel] } : { type: 'attack', id: m.id, target: ix.targetId, weapons: [...ix.sel] });
     }
     this.ix = { mode: 'sent' };
     this.r.clearOverlays();
@@ -402,6 +414,8 @@ export class Battle {
       if (t && t.id !== this.ix.targetId) { this.selectTarget(t.id); return; }
       const S = structureAt(this.state, n.x, n.y);
       if (S && this.ix.targets.includes(-S.id - 1) && this.ix.targetId !== -S.id - 1) { this.selectTarget(-S.id - 1); return; }
+      const U = unitAt(this.state, n.x, n.y);
+      if (U && this.ix.targets.includes(-U.id - 1000) && this.ix.targetId !== -U.id - 1000) { this.selectTarget(-U.id - 1000); return; }
     }
     this.updateCursorOverlay();
   }
@@ -428,7 +442,7 @@ export class Battle {
         if (a === 'confirm' || a === 'back') { sfx('ui-ok'); if (this.r.busy) { this.ix = { mode: 'anim' }; this.render(); } else this.refresh(); }
         return true;
       case 'pass':
-        if (a === 'confirm') { sfx('ui-ok'); this.perspSide = ix.side; this.setFull(this.full); this.r.syncMechs(this.state); this.r.syncStructures(this.state); this.beginMyTurn(); }
+        if (a === 'confirm') { sfx('ui-ok'); this.perspSide = ix.side; this.setFull(this.full); this.r.syncMechs(this.state); this.r.syncStructures(this.state); this.r.syncUnits(this.state); this.beginMyTurn(); }
         return true;
       case 'move': {
         const dirs = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -522,7 +536,7 @@ export class Battle {
 
   cycleMelee() {
     const ix = this.ix, st = this.state, m = st.mechs[ix.mechId], t = st.mechs[ix.targetId];
-    if (this.structOf(ix.targetId)) { toast('Structures can only be shot at.'); return; }
+    if (this.structOf(ix.targetId) || this.unitOf(ix.targetId)) { toast('Only mechs can be punched or kicked.'); return; }
     const opts = [null, ...['punch', 'kick', 'dfa'].filter((k) => toHit(st, m, t, null, { kind: k }).ok)];
     if (opts.length < 2) { toast('Melee needs an adjacent target in your front arc.'); return; }
     const i = opts.indexOf(ix.melee);
@@ -565,7 +579,11 @@ export class Battle {
       } else if (mode === 'attack') {
         const t = this.state.mechs.find((mm) => operational(mm) && mm.x === hit.x && mm.y === hit.y);
         if (t && this.ix.targets.includes(t.id)) this.selectTarget(t.id);
-        else { const S = structureAt(this.state, hit.x, hit.y); if (S && this.ix.targets.includes(-S.id - 1)) this.selectTarget(-S.id - 1); }
+        else {
+          const S = structureAt(this.state, hit.x, hit.y), U = unitAt(this.state, hit.x, hit.y);
+          if (S && this.ix.targets.includes(-S.id - 1)) this.selectTarget(-S.id - 1);
+          else if (U && this.ix.targets.includes(-U.id - 1000)) this.selectTarget(-U.id - 1000);
+        }
       } else if (mode === 'wait') { this.cursor = { x: hit.x, y: hit.y }; this.updateCursorOverlay(); }
     }
   }
@@ -734,9 +752,11 @@ export class Battle {
     this.cardsEl.replaceChildren();
     const activeId = ix.mechId ?? (st.act ? st.act.id : null);
     if (activeId !== null && activeId !== undefined && st.mechs[activeId] && !st.mechs[activeId].hidden) this.cardsEl.appendChild(this.unitCard(st.mechs[activeId], false));
-    const hovS = structureAt(st, this.cursor.x, this.cursor.y);
-    if (ix.mode === 'attack' && ix.targetId !== undefined && (st.mechs[ix.targetId] || this.structOf(ix.targetId))) this.cardsEl.appendChild(this.targetCard(st.mechs[ix.mechId], st.mechs[ix.targetId], this.structOf(ix.targetId)));
+    const hovS = structureAt(st, this.cursor.x, this.cursor.y), hovU = unitAt(st, this.cursor.x, this.cursor.y);
+    const tobj = ix.mode === 'attack' && ix.targetId !== undefined ? (this.structOf(ix.targetId) || this.unitOf(ix.targetId)) : null;
+    if (ix.mode === 'attack' && ix.targetId !== undefined && (st.mechs[ix.targetId] || tobj)) this.cardsEl.appendChild(this.targetCard(st.mechs[ix.mechId], st.mechs[ix.targetId], this.structOf(ix.targetId), this.unitOf(ix.targetId)));
     else if (this.hover && this.hover.id !== activeId) this.cardsEl.appendChild(this.unitCard(this.hover, true));
+    else if (hovU) this.cardsEl.appendChild(this.forceCard(hovU));
     else if (hovS) this.cardsEl.appendChild(this.structCard(hovS));
     else if (ix.mode === 'move' || ix.mode === 'wait') this.cardsEl.appendChild(this.terrainCard());
     tipGC();
@@ -839,6 +859,20 @@ export class Battle {
       <div class="uc-head"><div><div class="eyebrow">${ICON.shield} Structure · ${esc(side.name)}</div><b>${esc(STRUCTS[S.kind].name)}</b></div></div>${this.structFacts(S)}</div>`);
   }
 
+  // ---- infantry and vehicles
+  forceFacts(U) {
+    const K = UNITS[U.kind];
+    const pct = Math.round(unitStrength(U) * 100);
+    const arms = U.inf ? `${esc(K.name.split(' ')[0])} · ${Math.ceil(U.troops * K.perT)} dmg at ${K.rng} hex${K.rng > 1 ? 'es' : ''}` : U.weapons.map((w) => WEAPONS[w.t].short).join(' + ');
+    return `<div class="tgt-facts sfacts"><div class="bar" ${attr(U.inf ? 'Troopers' : 'Armour and structure', U.inf ? '<p>Troopers left in the platoon. Its firepower drops as it takes losses.</p>' : '<p>Armour, then internal structure. Hits can also damage the motive system, slowing or immobilising the vehicle.</p>')}><span class="track"><span class="fill" style="width:${pct}%"></span></span><span class="num">${U.inf ? U.troops + '/' + U.troopsMax : U.armor + U.struct + '/' + (U.armorMax + U.structMax)}</span></div>
+      <div class="dim">${esc(MOTION_NAMES[U.motion])} · ${U.immobile ? 'immobilised' : U.mp + ' MP'} · ${arms}</div></div>`;
+  }
+  forceCard(U) {
+    const side = this.structSide(U);
+    return html(`<div class="unit-card target panel" style="--side:${side.color}" ${attr(UNITS[U.kind].name, forceTip(U))}>
+      <div class="uc-head"><div><div class="eyebrow">${ICON.target} ${U.inf ? 'Infantry' : 'Vehicle'} · ${esc(U.team < 0 ? 'Local forces' : side.name)}</div><b>${esc(UNITS[U.kind].name)}</b></div></div>${this.forceFacts(U)}</div>`);
+  }
+
   heatBar(m, proj) {
     const sinks = dissipation(this.state, m);
     const ticks = [5, 8, 14, 19].map((v) => `<span class="tick" style="left:${v / 30 * 100}%"></span>`).join('');
@@ -866,24 +900,28 @@ export class Battle {
     this.render();
   }
 
-  targetCard(m, t, S) {
+  targetCard(m, t, S, U) {
     const st = this.state, ix = this.ix;
-    if (S) t = { x: S.x, y: S.y };
-    const s = S ? this.structSide(S) : st.sides[t.side];
+    const O = S || U;
+    if (O) t = { x: O.x, y: O.y };
+    const s = O ? this.structSide(O) : st.sides[t.side];
+    if (U && U.team < 0) s.name = 'Local forces';
     const dist = distance(m.x, m.y, t.x, t.y);
-    const rows = m.weapons.map((w) => ({ w, th: S ? toHitStructure(st, m, S, w) : toHit(st, m, t, w) }));
+    const rows = m.weapons.map((w) => ({ w, th: S ? toHitStructure(st, m, S, w) : U ? toHitUnit(st, m, U, w) : toHit(st, m, t, w) }));
     const sel = ix.sel || new Set();
     const proj = this.projectedHeat(m);
-    const ed = rows.filter((r) => sel.has(r.w.i) && r.th.ok).reduce((a, r) => a + expectedDamage(r.w, r.th.p), 0);
-    const dir = S ? 'F' : attackDirection(st, m.x, m.y, t);
-    const dirTxt = S ? (S.hard ? 'Hardened' : 'Immobile') : { F: 'Front', L: 'Left side', R: 'Right side', B: 'Rear shot' }[dir];
+    // against infantry, count troopers: MGs and flamers mow them down, big guns barely help
+    const vsInf = (w) => (w.t === 4 ? 7 : w.t === 15 ? 10.5 : WEAPONS[w.t].kind === 'm' ? Math.ceil(expectedDamage(w, 1) / 5) : Math.ceil(w.dmg / 10)) * (TERRAIN[st.map.t[U.y * st.map.w + U.x]].woods ? 1 : 2);
+    const ed = rows.filter((r) => sel.has(r.w.i) && r.th.ok).reduce((a, r) => a + (U && U.inf ? vsInf(r.w) * r.th.p : expectedDamage(r.w, r.th.p)), 0);
+    const dir = O ? 'F' : attackDirection(st, m.x, m.y, t);
+    const dirTxt = S ? (S.hard ? 'Hardened' : 'Immobile') : U ? (U.inf ? 'Infantry' : U.immobile ? 'Immobile' : 'Vehicle') : { F: 'Front', L: 'Left side', R: 'Right side', B: 'Rear shot' }[dir];
     const scale = Math.max(dist + 1, ...m.weapons.map((w) => w.rng));
-    const melee = S ? [] : ['punch', 'kick', 'dfa'].map((k) => ({ k, th: toHit(st, m, t, null, { kind: k }), dmg: k === 'dfa' ? dfaDamage(m) : k === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10) })).filter((x) => x.th.ok);
+    const melee = O ? [] : ['punch', 'kick', 'dfa'].map((k) => ({ k, th: toHit(st, m, t, null, { kind: k }), dmg: k === 'dfa' ? dfaDamage(m) : k === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10) })).filter((x) => x.th.ok);
     const nSel = rows.filter((r) => sel.has(r.w.i) && r.th.ok).length;
     const card = html(`<div class="unit-card target panel" style="--side:${s.color}">
-      <div class="uc-head"><div><div class="eyebrow">${ICON.target} Target · ${dist} hex${dist === 1 ? '' : 'es'} · ${esc(s.name)}</div><b>${esc(S ? STRUCTS[S.kind].name : t.design)}</b></div>
-        <span class="chip-sm ${dir === 'B' ? 'hot' : ''}" ${S ? attr(STRUCTS[S.kind].name, structTip(S)) : attr('Attack angle', hitDirTip(dir))}>${dirTxt}</span></div>
-      ${S ? this.structFacts(S) : `<div class="tgt-row">
+      <div class="uc-head"><div><div class="eyebrow">${ICON.target} Target · ${dist} hex${dist === 1 ? '' : 'es'} · ${esc(s.name)}</div><b>${esc(S ? STRUCTS[S.kind].name : U ? UNITS[U.kind].name : t.design)}</b></div>
+        <span class="chip-sm ${dir === 'B' ? 'hot' : ''}" ${S ? attr(STRUCTS[S.kind].name, structTip(S)) : U ? attr(UNITS[U.kind].name, forceTip(U)) : attr('Attack angle', hitDirTip(dir))}>${dirTxt}</span></div>
+      ${S ? this.structFacts(S) : U ? this.forceFacts(U) : `<div class="tgt-row">
         <div class="doll mini" ${attr('Target armour', ARMOR_TIP)}>${paperDoll(t)}</div>
         <div class="tgt-facts">
           <div class="bar"><span class="track"><span class="fill" style="width:${totalArmor(t) / maxArmor(t) * 100}%"></span></span><span class="num">${Math.round(totalArmor(t) / maxArmor(t) * 100)}%</span></div>
@@ -893,7 +931,7 @@ export class Battle {
       <div class="whead"><span></span><span>Weapon</span><span ${attr('Range bands', '<p>Each bar shows a weapon\'s reach: <span class="c-walk">short</span>, <span class="c-run">medium</span> and <span class="c-far">long</span> range. Hatching is the minimum range where the weapon struggles.</p><p>The white line is where the target is. If it falls past the end of a bar, that weapon can\'t reach.</p>')}>Range ${ICON.info}</span><span>Dmg</span><span>Heat</span><span ${attr('Hit chance', '<p>The chance this weapon hits, from rolling two dice against the target number. Hover or focus a weapon to see every modifier.</p>')}>Hit ${ICON.info}</span></div>
       <div class="weapons"></div>
       <div class="fire-sum">
-        <span ${attr('Expected damage', '<p>Average damage if you fire the ticked weapons, accounting for each hit chance and how many missiles usually connect.</p>')}>Expected <b class="num">${ix.melee ? (melee.find((x) => x.k === ix.melee)?.th.p * melee.find((x) => x.k === ix.melee)?.dmg || 0).toFixed(1) : ed.toFixed(1)}</b> dmg</span>
+        <span ${attr('Expected damage', '<p>Average damage if you fire the ticked weapons, accounting for each hit chance and how many missiles usually connect.</p>')}>Expected <b class="num">${ix.melee ? (melee.find((x) => x.k === ix.melee)?.th.p * melee.find((x) => x.k === ix.melee)?.dmg || 0).toFixed(1) : ed.toFixed(1)}</b> ${U && U.inf ? 'troopers' : 'dmg'}</span>
         ${this.heatBar(m, proj)}
       </div>
       <div class="why"></div>

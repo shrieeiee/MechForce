@@ -56,6 +56,10 @@ When a mech is destroyed its pilot tries to **eject** (piloting roll — a bad l
 
 Emplacements and bunkers are run by the computer for their side: at the end of every round each one fires at the best enemy it can see (gunnery 4, ammo runs out). Every structure blocks movement and sight, can be shot (immobile, -4 to hit) and collapses into rubble. Random battlefields can be fortified with **Defences: Light/Heavy** in the setup.
 
+## Infantry and vehicles
+
+**Ground forces: Few/Many** in the battle setup (or the editor's **Troops** tool) adds computer-run infantry platoons (rifle, laser, SRM, jump) and combat vehicles (hover scouts, armoured cars, light and battle tanks, missile carriers). A side's troops support its mechs; **local forces** guard their post and fire on any mech within six hexes. They move and fire at the end of each round. Following Total Warfare: infantry are +1 to hit and take damage ÷ 10 troopers from mech weapons (missiles ÷ 5; machine guns 2D6, flamers 3D6; doubled in the open); vehicles have armour and structure, and every hit can damage the motive system (hover +3, wheeled +2), slowing or immobilising them.
+
 ## Fire, smoke, water and climate
 
 Following BattleTech's Tactical Operations rules: flamers, plasma weapons, stray lasers and exploding mechs can set woods and buildings on fire. Fires spread downwind each round (the wind sometimes shifts), burn heavy woods down to light woods and then to rough ground, and give off smoke that blocks sight like woods. Standing in fire adds +5 heat. Water cools a mech but stepping in needs a piloting roll; on volcanic worlds the lakes are magma (+5/+10 heat, leg damage, no cooling). Deserts add 1 heat a turn, volcanic worlds 2, and arctic cold removes 1.

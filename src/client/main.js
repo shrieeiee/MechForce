@@ -440,7 +440,9 @@ class App {
       { k: 'theme', label: 'Terrain', value: THEMES.find((t) => t.id === L.settings.theme).name, opts: THEMES.map((t) => t.id), tip: '<p>' + esc(CLIMATE[L.settings.theme]?.text || '') + '</p>' },
       { k: 'defences', label: 'Defences', value: { none: 'None', light: 'Light', heavy: 'Heavy' }[L.settings.defences || 'none'], opts: ['none', 'light', 'heavy'],
         tip: '<p>Fortify each side\'s deployment edge. <b>Light</b>: two gun emplacements per side. <b>Heavy</b>: a bunker and three emplacements. They fire on their own at the end of every round, and can be shot down.</p>' });
-    else defs.push({ k: 'mapinfo', label: 'Battlefield', value: `${MAP_SIZES.find((s) => s.id === cm.size).name} · ${THEMES.find((t) => t.id === cm.theme).name}`, opts: [], fixed: true });
+    defs.push({ k: 'forces', label: 'Ground forces', value: { none: 'None', few: 'Few', many: 'Many' }[L.settings.forces || 'none'], opts: ['none', 'few', 'many'],
+      tip: '<p>Infantry platoons and combat vehicles, run by the computer. Each side gets support near its edge, and local militia guard the middle of the map, firing on any mech that comes close. <b>Few</b>: one per side and two local units. <b>Many</b>: twice that.</p><p>They move and shoot at the end of every round. Machine guns and flamers are the answer to infantry.</p>' });
+    if (cm) defs.push({ k: 'mapinfo', label: 'Battlefield', value: `${MAP_SIZES.find((s) => s.id === cm.size).name} · ${THEMES.find((t) => t.id === cm.theme).name}`, opts: [], fixed: true });
     defs.push(
       { k: 'tonnage', label: 'Tonnage limit', value: L.settings.tonnage + 't', opts: [100, 120, 140, 160, 180, 200, 240, 280, 320, 360, 400] },
       { k: 'lanceSize', label: 'Mechs per side', value: String(L.settings.lanceSize), opts: [1, 2, 3, 4] });

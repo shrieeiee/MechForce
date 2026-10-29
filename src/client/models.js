@@ -602,3 +602,102 @@ export function buildStructure(kind, weapons, colorHex) {
   root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return { root, body: root, torso, head: torso, legs: [], arms: [], muzzles, weaponMounts, jets: [], mats, height, scale: 1, wheels: [], treads: [], vk: 0, vOffset: 0, setVehicle() {}, structure: true };
 }
+
+// --------------------------------------------------------------------------- infantry & vehicles
+// Small conventional units, built to the same shape as mechs and structures: `torso` turns
+// to aim (a vehicle's turret, or the whole squad), weapons carry their real models, and the
+// infantry squad's troopers can be hidden one by one as the platoon takes losses.
+const tyreMat = new THREE.MeshStandardMaterial({ color: '#1d1f22', roughness: 0.95 });
+const skinMats = ['#e2b996', '#c68c62', '#8d5a3b', '#5c3a26'].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }));
+export function buildUnit(kind, weapons, colorHex, motion, inf) {
+  const mats = mechMaterials(colorHex || '#9aa3ad');
+  const root = new THREE.Group();
+  const torso = new THREE.Group();
+  root.add(torso);
+  const M = (geo, mat, x, y, z, parent = root) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
+  const weaponMounts = {}, muzzles = {};
+  const troopers = [];
+  let height = 0.5;
+  if (inf) {
+    // a fire team of troopers, spread out; the rest of the platoon is implied
+    const spots = [[0, 0.12], [-0.28, -0.05], [0.28, -0.05], [-0.14, -0.3], [0.16, -0.32], [0, 0.38], [-0.36, 0.25], [0.36, 0.22]];
+    const wt = weapons[0] ? weapons[0].t : 4;
+    spots.forEach(([x, z], k) => {
+      const t = new THREE.Group(); t.position.set(x, 0, z);
+      t.rotation.y = (k % 3 - 1) * 0.25;
+      const m = (geo, mat, px, py, pz) => { const o = new THREE.Mesh(geo, mat); o.position.set(px, py, pz); t.add(o); return o; };
+      m(box(0.045, 0.1, 0.05), mats.dark, -0.025, 0.05, 0); m(box(0.045, 0.1, 0.05), mats.dark, 0.025, 0.05, 0);
+      m(box(0.11, 0.12, 0.07), mats.body, 0, 0.16, 0);
+      m(box(0.08, 0.08, 0.04), mats.trim, 0, 0.17, -0.05);
+      m(sphere(0.035, 8, 6), skinMats[(k + hashStr(colorHex || '')) % 4], 0, 0.255, 0.005);
+      m(sphere(0.042, 8, 6), mats.body, 0, 0.27, -0.004).scale.set(1, 0.6, 1);
+      const gun = m(box(0.02, 0.025, wt === 9 ? 0.16 : 0.13), mats.dark, 0.05, 0.19, 0.06);
+      if (wt === 9) { gun.scale.set(2.2, 2.2, 1); gun.position.y = 0.24; }
+      if (motion === 'jump') m(box(0.07, 0.09, 0.04), mats.joint, 0, 0.17, -0.07);
+      const mz = new THREE.Object3D(); mz.position.set(0.05, 0.19, 0.13); t.add(mz);
+      torso.add(t);
+      troopers.push(t);
+      if (k === 0) { muzzles[-1] = mz; weaponMounts[0] = { muzzle: mz, meshes: [], group: t, anim: {} }; }
+    });
+    height = 0.32;
+  } else {
+    const hull = (L, W, H) => {
+      M(plate(W, H, L, 0.15), mats.body, 0, H / 2 + 0.08, 0);
+      M(box(W * 0.98, 0.03, L * 0.5), mats.trim, 0, H + 0.085, -L * 0.15);
+      const glacis = M(plate(W * 0.96, H * 0.6, L * 0.25, 0.2), mats.body, 0, H * 0.62 + 0.08, L * 0.45); glacis.rotation.x = -0.6;
+    };
+    const mount = (parent, y, z, spread, scale) => weapons.forEach((w, k) => {
+      const part = weaponPart(w.t, scale, mats);
+      part.g.position.set((k - (weapons.length - 1) / 2) * spread, y, z);
+      parent.add(part.g);
+      weaponMounts[w.i] = { muzzle: part.mz, meshes: [], group: part.g, anim: part.anim };
+      if (!muzzles[-1]) muzzles[-1] = part.mz;
+    });
+    if (motion === 'hover') {
+      // a skirted hovercraft with a fan at the back
+      M(cyl(0.36, 0.42, 0.1, 14), tyreMat, 0, 0.07, 0).scale.set(0.8, 1, 1.3);
+      M(plate(0.5, 0.16, 0.8, 0.3), mats.body, 0, 0.2, 0.02);
+      M(box(0.3, 0.08, 0.22), mats.glass, 0, 0.3, 0.12);
+      M(torus(0.12, 0.025), mats.dark, 0, 0.33, -0.36);
+      torso.position.set(0, 0.3, 0.05);
+      mount(torso, 0.02, 0.18, 0.12, 0.7);
+      height = 0.42;
+    } else if (motion === 'wheeled') {
+      const L = kind === 'carrier' ? 1.0 : 0.82, W = 0.46, H = 0.26;
+      hull(L, W, H);
+      for (const sx of [-1, 1]) for (const z of kind === 'carrier' ? [-0.34, 0, 0.32] : [-0.28, 0.26]) { const wh = M(cyl(0.11, 0.11, 0.09, 12), tyreMat, sx * (W / 2 + 0.02), 0.11, z); wh.rotation.z = Math.PI / 2; }
+      if (kind === 'carrier') {
+        // the launcher box tilts up on the back deck
+        torso.position.set(0, 0.36, -0.12);
+        const rack = new THREE.Group(); rack.rotation.x = -0.35; torso.add(rack);
+        M(box(0.36, 0.2, 0.46), mats.trim, 0, 0.1, 0, rack);
+        for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) M(cyl(0.022, 0.022, 0.02, 6), mats.dark, -0.12 + c * 0.06, 0.03 + r * 0.045, 0.235, rack).rotation.x = Math.PI / 2;
+        const mz = new THREE.Object3D(); mz.position.set(0, 0.1, 0.25); rack.add(mz);
+        muzzles[-1] = mz; weapons.forEach((w) => { weaponMounts[w.i] = { muzzle: mz, meshes: [], group: rack, anim: {} }; });
+      } else {
+        torso.position.set(0, 0.36, -0.04);
+        M(cyl(0.13, 0.15, 0.1, 8), mats.trim, 0, 0.05, 0, torso);
+        mount(torso, 0.08, 0.1, 0.1, 0.65);
+      }
+      height = 0.55;
+    } else {
+      // tracked: light tank or battle tank
+      const big = kind === 'tank';
+      const L = big ? 1.05 : 0.86, W = big ? 0.62 : 0.52, H = big ? 0.24 : 0.2;
+      for (const sx of [-1, 1]) {
+        M(plate(0.13, 0.17, L * 1.02, 0.4), tyreMat, sx * (W / 2 + 0.03), 0.1, 0);
+        for (let k = 0; k < 5; k++) { const wh = M(cyl(0.055, 0.055, 0.03, 10), mats.joint, sx * (W / 2 + 0.1), 0.08, -L / 2 + 0.12 + k * (L - 0.24) / 4); wh.rotation.z = Math.PI / 2; }
+      }
+      hull(L, W, H);
+      torso.position.set(0, H + 0.1, big ? -0.06 : -0.02);
+      M(plate(W * 0.72, big ? 0.2 : 0.16, big ? 0.52 : 0.42, 0.25), mats.body, 0, 0.1, 0, torso);
+      M(cyl(0.05, 0.05, 0.04, 8), mats.glass, 0.12, 0.22, -0.08, torso);
+      mount(torso, big ? 0.1 : 0.09, big ? 0.24 : 0.2, 0.12, big ? 0.95 : 0.75);
+      height = big ? 0.62 : 0.52;
+    }
+  }
+  mergeStatic(root);
+  for (const wm of Object.values(weaponMounts)) wm.group.traverse((o) => { if (o.isMesh) wm.meshes.push(o); });
+  root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return { root, body: root, torso, head: torso, legs: [], arms: [], muzzles, weaponMounts, jets: [], mats, height, scale: 1, wheels: [], treads: [], vk: 0, vOffset: 0, setVehicle() {}, structure: true, troopers };
+}

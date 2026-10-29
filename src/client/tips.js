@@ -1,7 +1,7 @@
 // Tooltip engine + the plain-language explanations shown in tooltips and the field manual.
 // Any element with data-tip (HTML) and optional data-tip-title gets a tooltip:
 //   mouse: hover · controller/keyboard: when the element has focus · touch: long-press.
-import { WEAPONS, TERRAIN, STRUCTS, LOADOUTS } from '../core/data.js';
+import { WEAPONS, TERRAIN, STRUCTS, LOADOUTS, UNITS, MOTION_NAMES } from '../core/data.js';
 import { chance } from '../core/rng.js';
 import { ABILITIES } from '../core/pilots.js';
 import { esc } from './ui.js';
@@ -314,6 +314,11 @@ export const MANUAL = [
     <p><b>Gun emplacements</b> and <b>bunkers</b> belong to a side and fire on their own at the end of every round, at the best target in range and sight (gunnery 4, and they never move: +0 for movement). An emplacement mounts one weapon and turns to face anything; a bunker is hardened (it takes half damage) and mounts two. They run out of ammunition like mechs do.</p>
     <p><b>Buildings</b> and <b>walls</b> are unarmed cover: they block movement and sight like a hill of their height. Buildings can burn.</p>
     <p>You can shoot any of them: select it as a target in attack mode. It's immobile (-4 to hit). When its <b>construction factor</b> reaches 0 it collapses into rubble. Turn on <b>Defences</b> in the battle setup to fortify a random map, or place your own in the <b>Map editor</b>.</p>` },
+  { k: 'forces', t: 'Infantry & vehicles', body: `
+    <p>Turn on <b>Ground forces</b> in the battle setup, or place troops in the <b>Map editor</b>. Infantry platoons (rifle, laser, SRM and jump troops) and vehicles (hover scouts, armoured cars, light and battle tanks, missile carriers) are run by the computer and act together at the end of every round: they move, then fire.</p>
+    <p>A side's troops support its mechs. <b>Local forces</b> belong to no one: they guard their post and fire on any mech that comes within six hexes of it — and on other sides' troops that get too close.</p>
+    <p>You can shoot them like any target. Infantry are +1 to hit, and BattleMech weapons are clumsy against them: lasers and cannon kill only damage ÷ 10 troopers, missiles ÷ 5, while <b>machine guns</b> (2D6) and <b>flamers</b> (3D6) mow them down. Twice as many fall when caught in the open. A platoon's firepower shrinks with its numbers.</p>
+    <p>Vehicles have armour and internal structure. Any hit can damage the motive system — hovercraft and wheels are the most fragile — slowing them or stopping them dead (immobile targets are -4 to hit, and a stranded hovercraft on water sinks). They block movement like mechs, and reactor blasts and fire hurt them too.</p>` },
   { k: 'terrain', t: 'Fire, smoke & climate', body: `
     <p><b>Fire.</b> Flamers set woods alight easily, plasma weapons sometimes, and a stray laser or an exploding mech can too. Fires spread downwind at the end of each round, burn heavy woods down to light woods and then to rough ground, and set buildings ablaze. Standing in a burning hex adds <b>+5 heat</b>.</p>
     <p><b>Smoke</b> drifts from fires and blocks sight like woods: +1 or +2 to hit through it.</p>
@@ -338,4 +343,12 @@ export function structTip(S) {
   const guns = S.load && S.load.length ? S.load.map((l) => LOADOUTS[l] ? LOADOUTS[l].name : l).join(' and ') : '';
   return `<p>${esc(K.name)}${guns ? ' armed with ' + esc(guns) + '. It fires at the end of every round at the best enemy it can see.' : '. Unarmed cover that blocks movement and sight.'}</p>`
     + `<p>Construction factor ${S.cf} of ${S.cfMax}.${S.hard ? ' Hardened: takes half damage.' : ''}${K.burns ? ' Can catch fire.' : ''} Immobile: -4 to hit.</p>`;
+}
+
+export function forceTip(U) {
+  const K = UNITS[U.kind];
+  const who = U.team < 0 ? 'Local forces: they defend their ground against any mech that comes within six hexes of their post.' : 'Fights for its side, run by the computer.';
+  return `<p>${esc(K.name)} (${esc(MOTION_NAMES[U.motion].toLowerCase())}). ${who} Moves and fires at the end of each round.</p>`
+    + (U.inf ? `<p>${U.troops} of ${U.troopsMax} troopers. +1 to hit. Mech weapons are clumsy against infantry: lasers and cannon kill only damage ÷ 10 troopers, missiles ÷ 5, but <b>machine guns</b> (2D6) and <b>flamers</b> (3D6) mow them down. Twice as many fall when they're caught in the open.</p>`
+      : `<p>Armour ${U.armor}/${U.armorMax}, structure ${U.struct}/${U.structMax}. Every hit can damage the ${U.motion === 'hover' ? 'lift fan (hovercraft are fragile)' : U.motion === 'wheeled' ? 'wheels' : 'tracks'}, slowing it or stopping it dead${U.motion === 'hover' ? ' — and an immobilised hovercraft on water sinks' : ''}.</p>`);
 }

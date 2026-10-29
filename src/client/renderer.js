@@ -4,9 +4,9 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { center, DIR_ANGLE, toAxial, fromAxial, neighbor } from '../core/hex.js';
-import { WEAPONS, TERRAIN } from '../core/data.js';
+import { WEAPONS, TERRAIN, UNITS } from '../core/data.js';
 import { totalArmor, maxArmor, operational } from '../core/rules.js';
-import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims, rollTracks, buildStructure } from './models.js';
+import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims, rollTracks, buildStructure, buildUnit } from './models.js';
 import { sfx } from './audio.js';
 import { input } from './input.js';
 
@@ -275,6 +275,8 @@ export class Renderer {
     this.structGroup = new THREE.Group(); this.world.add(this.structGroup);
     this.envGroup = new THREE.Group(); this.world.add(this.envGroup);
     if (this.structs) this.structs.clear(); else this.structs = new Map();
+    this.unitGroup = new THREE.Group(); this.world.add(this.unitGroup);
+    if (this.units) this.units.clear(); else this.units = new Map();
     this.fireFx = []; this.smokeFx = [];
     this.itemObj = null;
   }
@@ -366,6 +368,62 @@ export class Renderer {
       sv.model.root.visible = !s.dead;
     }
     for (const [id, sv] of this.structs) if (!seen.has(id)) { this.structGroup.remove(sv.model.root); this.structs.delete(id); }
+  }
+
+  // Infantry and vehicles. Views look like structure views ('u' + id), so aiming and firing
+  // reuse the same code; troopers vanish from the squad as the platoon takes losses.
+  syncUnits(state) {
+    if (!this.units) this.units = new Map();
+    if (!this.unitGroup) return;
+    const seen = new Set();
+    for (const u of state.units || []) {
+      seen.add(u.id);
+      let uv = this.units.get(u.id);
+      if (!uv) {
+        const color = u.team >= 0 && state.teams && state.teams[u.team] ? state.teams[u.team].color : '#b3a37a';
+        const model = buildUnit(u.kind, u.weapons || [], color, u.motion, u.inf);
+        uv = { id: 'u' + u.id, uid: u.id, model, state: u, wantYaw: 0, free: true, color, unit: true };
+        this.unitGroup.add(model.root);
+        this.units.set(u.id, uv);
+      }
+      uv.state = u;
+      if (u.x >= 0 && !uv.moving) {
+        const p = hexWorld(u.x, u.y);
+        uv.model.root.position.set(p.x, this.unitY(u), p.z);
+        uv.model.root.rotation.y = facingRot(u.f || 0);
+        uv.model.torso.rotation.y = 0; uv.wantYaw = 0;
+      }
+      uv.model.root.visible = !u.dead && !u.hidden && u.x >= 0;
+      this.unitLosses(uv);
+    }
+    for (const [id, uv] of this.units) if (!seen.has(id)) { this.unitGroup.remove(uv.model.root); this.units.delete(id); }
+  }
+  unitY(u) { const t = this.map.t[u.y * this.map.w + u.x]; return t >= 4 ? topY(0) - 0.04 : this.tileTop(u.x, u.y); }
+  unitLosses(uv) {
+    const u = uv.state;
+    if (!u.inf || !uv.model.troopers) return;
+    const n = uv.model.troopers.length;
+    const keep = u.dead ? 0 : Math.max(1, Math.ceil(n * u.troops / u.troopsMax));
+    uv.model.troopers.forEach((t, k) => { t.visible = k < keep; });
+  }
+  async animUnitMove(uv, e, sp) {
+    const root = uv.model.root;
+    const a = root.position.clone();
+    const p = hexWorld(e.x, e.y);
+    const b = new THREE.Vector3(p.x, this.unitY({ ...uv.state, x: e.x, y: e.y }), p.z);
+    const yaw0 = root.rotation.y, yaw1 = facingRot(e.f || 0);
+    const dYaw = Math.atan2(Math.sin(yaw1 - yaw0), Math.cos(yaw1 - yaw0));
+    uv.moving = true;
+    root.visible = true;
+    if (e.jump) sfx('jet', { pan: this.panOf(a), size: 0.4 });
+    const dist = a.distanceTo(b);
+    await this.tween(Math.min(900, 260 + dist * 130) / sp, (k) => {
+      root.position.lerpVectors(a, b, k);
+      if (e.jump) root.position.y += Math.sin(k * Math.PI) * 1.2;
+      root.rotation.y = yaw0 + dYaw * Math.min(1, k * 3);
+      if (!uv.state.inf && Math.random() < 0.3) this.spawn(root.position.clone().add(new THREE.Vector3(0, 0.08, 0)), { color: uv.state.motion === 'hover' ? '#cfd8dc' : '#8a7a66', size: 0.25, speed: 0.4, life: 0.7, normal: true, opacity: 0.35, grow: 2 });
+    });
+    uv.moving = false;
   }
 
   // Fire and smoke: flickering flames over burning hexes, smoke drifting with the wind
@@ -557,7 +615,7 @@ export class Renderer {
   setTargetLine(fromId, toId, ok = true) {
     if (this.targetLine) { this.overlayGroup.remove(this.targetLine); this.targetLine.geometry.dispose(); this.targetLine = null; }
     if (fromId === null || toId === null || fromId === undefined || toId === undefined) return;
-    const a = this.mechs.get(fromId), b = this.mechs.get(toId);
+    const a = this.viewOf(fromId), b = this.viewOf(toId);
     if (!a || !b) return;
     const pa = a.model.root.position.clone(); pa.y += a.model.height * 0.75;
     const pb = b.model.root.position.clone(); pb.y += b.model.height * 0.6;
@@ -626,8 +684,13 @@ export class Renderer {
   }
 
   // Swing the camera side-on to the line between two mechs and pull back until both are in frame.
+  // a mech id, or 's<id>' for a structure, 'u<id>' for an infantry or vehicle unit
+  viewOf(id) {
+    if (typeof id === 'string') { const n = +id.slice(1); return id[0] === 's' ? this.structs && this.structs.get(n) : id[0] === 'u' ? this.units && this.units.get(n) : null; }
+    return this.mechs.get(id);
+  }
   frameMechs(idA, idB) {
-    const a = this.mechs.get(idA), b = this.mechs.get(idB);
+    const a = this.viewOf(idA), b = this.viewOf(idB);
     if (!a || !b) return;
     const pa = a.model.root.position, pb = b.model.root.position;
     const c = this.cam;
@@ -651,6 +714,11 @@ export class Renderer {
     this.framed = idA + ':' + idB;
   }
 
+  onScreenPos(pos, margin = 60) {
+    const rect = this.canvas.getBoundingClientRect();
+    const s = this.project(pos.clone());
+    return !s.behind && s.x > rect.left + margin && s.x < rect.right - margin && s.y > rect.top + margin && s.y < rect.bottom - margin;
+  }
   onScreen(id, margin = 40) {
     const m = this.mechs.get(id);
     if (!m) return true;
@@ -715,6 +783,15 @@ export class Renderer {
         let o = sh.object; while (o && !sObjs.includes(o)) o = o.parent;
         const sv = [...this.structs.values()].find((q) => q.model.root === o);
         if (sv) return { x: sv.state.x, y: sv.state.y, structure: sv.sid };
+      }
+    }
+    if (this.units && this.units.size) {
+      const uObjs = [...this.units.values()].filter((uv) => uv.model.root.visible).map((uv) => uv.model.root);
+      const uh = this.raycaster.intersectObjects(uObjs, true)[0];
+      if (uh) {
+        let o = uh.object; while (o && !uObjs.includes(o)) o = o.parent;
+        const uv = [...this.units.values()].find((q) => q.model.root === o);
+        if (uv) return { x: uv.state.x, y: uv.state.y, unit: uv.uid };
       }
     }
     const hit = this.raycaster.intersectObject(this.terrain, false)[0];
@@ -857,6 +934,15 @@ export class Renderer {
         this.spawn(p, { color: '#4a4a4a', size: 0.3, speed: 0.25, rise: 0.9, life: 2, normal: true, opacity: 0.5, grow: 3 });
       }
     }
+    if (this.units) for (const uv of this.units.values()) {
+      if (uv.state.dead || !uv.model.root.visible) continue;
+      tickWeaponAnims(uv.model, dt, this.time);
+      uv.model.torso.rotation.y += (uv.wantYaw - uv.model.torso.rotation.y) * Math.min(1, dt * 5);
+      if (!uv.state.inf && uv.state.struct < uv.state.structMax && this.quality !== 'low' && Math.random() < dt * 2) {
+        const p = uv.model.root.position.clone(); p.y += uv.model.height * 0.8;
+        this.spawn(p, { color: '#4a4a4a', size: 0.22, speed: 0.2, rise: 0.8, life: 1.6, normal: true, opacity: 0.45, grow: 3 });
+      }
+    }
     if (this.marks) for (let i = this.marks.length - 1; i >= 0; i--) {
       const o = this.marks[i]; o.age += dt;
       o.m.material.opacity = 0.6 * Math.max(0, 1 - o.age / 14);
@@ -919,6 +1005,7 @@ export class Renderer {
       if (this.terrainDirty) { this.terrainDirty = false; this.updateTerrain(state.map); }
       this.syncMechs(state);
       this.syncStructures(state);
+      this.syncUnits(state);
       this.setEnvironment(state);
     });
     return this.queue;
@@ -956,6 +1043,39 @@ export class Renderer {
           await this.animShot(sv, tv, e, state, sp);
           break;
         }
+        case 'umove': {
+          const uv = this.units && this.units.get(e.uid);
+          if (!uv) break;
+          uv.state = state.units[e.uid] || uv.state;
+          const p = hexWorld(e.x, e.y);
+          if (!this.onScreenPos(new THREE.Vector3(p.x, 0.5, p.z))) { this.focusHex(e.x, e.y); await sleep(200 / sp); }
+          await this.animUnitMove(uv, e, sp);
+          break;
+        }
+        case 'ushot': {
+          const uv = this.units && this.units.get(e.uid);
+          const tv = e.target !== undefined ? this.mechs.get(e.target) : this.units && this.units.get(e.tu);
+          if (!uv || !tv) break;
+          uv.model.root.visible = true;
+          if (e.target !== undefined) this.unfog(tv, state.mechs[e.target]);
+          if (!this.onScreenPos(tv.model.root.position)) { this.focusHex(uv.state.x, uv.state.y); await sleep(220 / sp); }
+          await this.animShot(uv, tv, e, state, sp);
+          break;
+        }
+        case 'uhit': { const uv = this.units && this.units.get(e.uid); if (uv && e.dmg) { const u = state.units[e.uid]; this.float(uv, u && u.inf ? `-${e.dmg}` : String(e.dmg), 'dmg'); if (u) { uv.state = u; this.unitLosses(uv); } } break; }
+        case 'umotive': { const uv = this.units && this.units.get(e.uid); if (uv) this.float(uv, e.mp ? 'MOTIVE DAMAGE' : 'IMMOBILISED', 'crit'); break; }
+        case 'ugone': {
+          const uv = this.units && this.units.get(e.uid);
+          if (uv) {
+            const p = uv.model.root.position.clone(); p.y += 0.2;
+            if (e.inf) { this.spawn(p, { n: 10, color: '#8a7a66', size: 0.3, speed: 1, life: 0.9, normal: true, opacity: 0.5 }); }
+            else { this.explosion(p, 1.3); sfx('boom', { size: 0.9, pan: this.panOf(p) }); }
+            uv.state = { ...uv.state, dead: true }; uv.model.root.visible = false;
+            await sleep(300 / sp);
+          }
+          break;
+        }
+        case 'units': break;
         case 'sgone': {
           const sv = this.structs && this.structs.get(e.sid);
           if (sv) { const p = sv.model.root.position.clone(); p.y += sv.model.height * 0.5; this.explosion(p, 2); sfx('boom', { size: 1.5, pan: this.panOf(p) }); sv.model.root.visible = false; this.terrainDirty = true; await sleep(450 / sp); }
@@ -965,6 +1085,13 @@ export class Renderer {
         case 'fire': { const p = hexWorld(e.x, e.y); p.y = this.tileTop(e.x, e.y) + 0.3; this.spawn(p, { n: 16, color: '#ff7a1a', size: 0.5, speed: 1.2, rise: 1.2, life: 0.9 }); sfx('flamer', { pan: this.panOf(p) }); break; }
         case 'shot': case 'melee': {
           if (!v) break;
+          if (e.utarget !== undefined) {
+            const tv = this.units && this.units.get(e.utarget);
+            if (!tv) break;
+            if (!this.onScreen(e.id)) { this.focusHex(tv.state.x, tv.state.y); await sleep(250 / sp); }
+            await this.animShot(v, tv, e, state, sp);
+            break;
+          }
           if (e.starget !== undefined) {
             const tv = this.structs && this.structs.get(e.starget);
             if (!tv) break;
@@ -1132,7 +1259,7 @@ export class Renderer {
     this.aimAt(v, t);
     v.model.torso.rotation.y = v.wantYaw;
     const W = WEAPONS[e.wt];
-    const w = e.k === 'sshot' ? state.structures[e.sid].weapons[e.w] : state.mechs[e.id].weapons[e.w];
+    const w = e.k === 'sshot' ? state.structures[e.sid].weapons[e.w] : e.k === 'ushot' ? (state.units[e.uid] || { weapons: [] }).weapons[e.w] : state.mechs[e.id].weapons[e.w];
     const wm = w && v.model.weaponMounts && v.model.weaponMounts[w.i];
     if (wm) { triggerWeaponAnim(wm); if (wm.anim && wm.anim.charge) await sleep(260 / sp); }
     if (v.free) await sleep(180 / sp); // turret swings round
