@@ -12,6 +12,7 @@ const OUT = process.env.OUT;
   // put the two mechs near each other on open ground, our turn first
   await p.evaluate(() => {
     const room = window.__mf.session.room;
+    room.slots[0].lance = ['Grasshopper']; room.slots[1].lance = ['Griffin'];
     room.handle(window.__mf.session.myId, { t: 'start' });
     const g = room.game;
     for (let i = 0; i < g.map.t.length; i++) { g.map.t[i] = 0; g.map.e[i] = 0; }
@@ -26,14 +27,14 @@ const OUT = process.env.OUT;
   const mode = await p.evaluate(() => window.__mf.battle.ix.mode);
   console.log('mode', mode);
   // jump to the hex next to the Griffin
-  await p.evaluate(() => { const bt = window.__mf.battle; while (bt.ix.moveMode !== 'jump') bt.onAction('y'); });
+  await p.evaluate(() => { const bt = window.__mf.battle; for (let i = 0; i < 6 && bt.ix.moveMode !== 'jump'; i++) bt.onAction('y'); });
   await p.waitForTimeout(200);
   await p.evaluate(() => { const bt = window.__mf.battle; bt.cursor = { x: 9, y: 8 }; bt.enterFacing(9, 8); });
   await p.waitForTimeout(200); await p.keyboard.press('Enter');
   await p.waitForTimeout(2500);
   console.log('after jump', await p.evaluate(() => { const bt = window.__mf.battle; return bt.ix.mode + ' target ' + bt.ix.targetId; }));
   // pick death from above with the melee button
-  await p.evaluate(() => { const bt = window.__mf.battle; while (bt.ix.melee !== 'dfa') { bt.onAction('y'); if (!bt.ix.melee && bt.__n > 5) break; bt.__n = (bt.__n || 0) + 1; } });
+  await p.evaluate(() => { const bt = window.__mf.battle; for (let i = 0; i < 6 && bt.ix.melee !== 'dfa'; i++) bt.onAction('y'); });
   await p.waitForTimeout(400);
   await p.hover('[data-key=melee-dfa]').catch(() => {});
   await p.waitForTimeout(500);

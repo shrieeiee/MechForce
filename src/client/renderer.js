@@ -1236,7 +1236,7 @@ export class Renderer {
           v.model.legs.forEach((l) => { const g = sw * l.gait; l.hip.rotation.x = g; l.knee.rotation.x = l.rest + Math.max(0, -g) * 0.8; });
         });
         if (tracked) sfx('servo', { gain: 0.35, pan: this.panOf(pb) });
-        else sfx('step', { gain: 0.5 + v.state.tons / 120, rate: 1.4 - v.state.tons / 200, pan: this.panOf(pb) });
+        else sfx('step', { tons: v.state.tons, pan: this.panOf(pb) });
       }
       if (!tracked) v.model.legs.forEach((l) => { l.hip.rotation.x = 0; l.knee.rotation.x = l.rest; });
     }
@@ -1276,9 +1276,24 @@ export class Renderer {
         const size = W.fx === 'laserL' ? 1.6 : W.fx === 'laserM' ? 1.15 : 0.8;
         const color = W.fx === 'laserL' ? '#ff3b5c' : W.fx === 'laserM' ? '#ff4d9a' : '#ff8a3c';
         sfx('laser', { size, pan });
-        this.beam(from, to, color, 0.025 * size, 0.28);
-        impact(to, 0.35 * size);
-        await sleep(260 / sp);
+        if (W.fx === 'laserL') {
+          // one long, thick beam after a short charge
+          if (wm) this.spawn(from, { n: 6, color: '#ff8aa0', size: 0.25, speed: 0.4, life: 0.15 });
+          await sleep(70 / sp);
+          this.beam(from, to, color, 0.04, 0.5);
+          impact(to, 0.6);
+          await sleep(420 / sp);
+        } else {
+          // pulses: pew-pew (medium), pew-pew-pew (small)
+          const n = W.fx === 'laserM' ? 2 : 3, gap = W.fx === 'laserM' ? 100 : 75;
+          for (let i = 0; i < n; i++) {
+            const tt = i ? to.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.15, (Math.random() - 0.5) * 0.15, (Math.random() - 0.5) * 0.15)) : to;
+            this.beam(from, tt, color, 0.022 * size, 0.12);
+            if (i === n - 1 || e.hit) impact(tt, 0.25 * size);
+            await sleep(gap / sp);
+          }
+          await sleep(80 / sp);
+        }
         break;
       }
       case 'plasma': {
@@ -1301,7 +1316,7 @@ export class Renderer {
       }
       case 'mg': {
         sfx('mg', { pan });
-        for (let i = 0; i < 6; i++) { const tt = to.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.4)); this.projectile(from, tt, { color: '#ffe680', size: 0.1, dur: 0.12 / sp }); await sleep(45 / sp); }
+        for (let i = 0; i < 12; i++) { const tt = to.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.4)); this.projectile(from, tt, { color: '#ffe680', size: 0.1, dur: 0.12 / sp }); if (i % 3 === 0) this.spawn(from, { n: 2, color: '#ffd27a', size: 0.12, speed: 0.6, life: 0.08 }); await sleep(48 / sp); }
         if (e.hit) this.spawn(to, { n: 10, color: '#ffe08a', size: 0.1, speed: 3, life: 0.3, grow: 0 });
         await sleep(120 / sp);
         break;
