@@ -64,6 +64,20 @@ Emplacements and bunkers are run by the computer for their side: at the end of e
 
 Following BattleTech's Tactical Operations rules: flamers, plasma weapons, stray lasers and exploding mechs can set woods and buildings on fire. Fires spread downwind each round (the wind sometimes shifts), burn heavy woods down to light woods and then to rough ground, and give off smoke that blocks sight like woods. Standing in fire adds +5 heat. Water cools a mech but stepping in needs a piloting roll; on volcanic worlds the lakes are magma (+5/+10 heat, leg damage, no cooling). Deserts add 1 heat a turn, volcanic worlds 2, and arctic cold removes 1.
 
+## Campaign
+
+Run a **mercenary company**: four mechs and 4M C-bills to start, contracts from a board of three (mission, world, danger, pay, kill bonus, salvage rights), Barracks MechWarriors in the cockpits. Damage carries over until repaired, destroyed mechs become wrecks to rebuild or scrap, won contracts can salvage enemy wrecks; buy and sell mechs, hire recruits, pay salaries, and don't go bankrupt.
+
+## Computer skill, saves and replays
+
+- **Easy / Normal / Hard / Veteran** computer opponents (skills, focus fire, risk-taking, how early they press for a result). Computer commanders grow bolder as the round limit nears, so battles end.
+- **Resume battle**: local battles save after every move.
+- **Replays** of every finished battle (online ones included): pause, step, next round, up to 8× speed. Battles are deterministic, so a replay is the starting state plus everyone's orders (~30 KB). Save as a file or share as a text code.
+
+## Accessibility and options
+
+Colour-blind mode (Okabe-Ito-based team colours plus a shape per side on rings, labels and the turn bar), text size, rebindable keyboard controls, and a sound mixer (footsteps, weapons, hits, menus; off-screen footsteps full/quieter/muted). **Move to another device** saves pilots, maps, custom mechs, the company and settings as a backup file or text code; maps can be shared on their own from the editor.
+
 ## Up to four players
 
 Every mission supports 2–4 forces, each a player (local hotseat or online) or the computer. Objective missions are played as two teams (2v2, 2v1 or 3v1 — move forces between teams in the lobby); Search & Destroy can be a free-for-all or two teams. Teammates deploy together, can't damage each other and win together.
@@ -104,11 +118,15 @@ Button prompts switch automatically between Xbox/Deck, PlayStation, keyboard and
 
 Allow *Install unknown apps* for your browser or file manager and open the APK. Every build is signed with the same key in `android/mechforce.keystore`, so updates install over the top. Use your own key before publishing to a store.
 
+## Performance
+
+Every mech, vehicle and emplacement is skinned into a single mesh (each moving part is a bone), so a large battle draws in ~120 calls a frame instead of ~1,000. Sound effects are pre-rendered into samples in the background; online hosts send state patches instead of whole states.
+
 ## Develop
 
 ```bash
 npm install
-npm test          # AI-vs-AI simulations of every mission
+npm test          # rules tests: AI-vs-AI games of every mission, chassis, fog, structures, units, pilots, campaign, replays (seeded; TEST_SEED=n to vary)
 npm run build     # dist/web, dist/server.cjs, dist/artifact
 npm run server    # LAN server + web client on :7373
 npm start         # desktop app (Electron)

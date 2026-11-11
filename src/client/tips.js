@@ -324,6 +324,18 @@ export const MANUAL = [
     <p><b>Smoke</b> drifts from fires and blocks sight like woods: +1 or +2 to hit through it.</p>
     <p><b>Water</b> cools a mech that stands in it (more when deeper), but stepping into it needs a piloting roll. On volcanic worlds the lakes are <b>magma</b>: +5 heat on the crust, +10 and leg damage in liquid magma, and no cooling.</p>
     <p><b>Climate</b> changes heat every turn: desert +1, volcanic +2, arctic −1.</p>` },
+  { k: 'campaign', t: 'Campaign', body: `
+    <p>Run a <b>mercenary company</b>: start with four mechs and some C-bills, then pick contracts from the board — each lists the mission, world, danger, pay, kill bonus and salvage rights. Deploy up to four ready mechs crewed by your Barracks MechWarriors; the enemy grows with your strength and the contract's danger.</p>
+    <p>Damage stays on your mechs until you pay to repair it, and destroyed mechs come back as wrecks to rebuild or scrap. Winning a contract with salvage rights can bring enemy wrecks home. Buy and sell in the <b>Market</b>, hire recruits, and mind the payroll: fall too deep into debt and the company folds.</p>` },
+  { k: 'skill', t: 'Computer skill', body: `
+    <p>Pick <b>Easy</b>, <b>Normal</b>, <b>Hard</b> or <b>Veteran</b> computer opponents in the battle setup. Higher levels have better gunnery and piloting, focus fire on damaged targets, take fewer needless risks and start pressing for a result sooner. As the round limit nears every computer commander gets bolder, so battles reach an ending.</p>` },
+  { k: 'replays', t: 'Saves & replays', body: `
+    <p><b>Resume battle</b>: battles on this device (solo, hotseat and campaign) save after every move. If you quit or the app closes, pick up where you left off from the title screen.</p>
+    <p><b>Replays</b>: every finished battle — online ones too — is kept as a replay. Watch it from the results screen or <b>Replays</b> on the title: pause, step, skip to the next round, 1–8× speed. A replay is just the starting state and everyone's orders, so it plays out exactly as the battle did. Save one as a file, or copy it as a text code to send to a friend.</p>` },
+  { k: 'options', t: 'Options & devices', body: `
+    <p><b>Colour-blind mode</b> swaps team colours for a palette that stays distinct with red-green colour blindness and gives every side a shape — on its base rings, labels and the turn order bar. <b>Text size</b> scales menus and labels. <b>Keyboard controls</b> can be rebound.</p>
+    <p><b>Sound mixer</b>: set footsteps, weapons, hits and menu sounds separately, and choose whether mechs walking off-screen are heard at full volume, quieter or not at all.</p>
+    <p><b>Move to another device</b> (Settings): save a backup of your MechWarriors, maps, custom mechs, company and settings as a file or a text code, and open or paste it on the other device. Maps can also be shared on their own from the map editor.</p>` },
   { k: 'controls', t: 'Controls', body: `
     <table class="tt"><tr><td>Move cursor</td><td>Left stick / d-pad · WASD / arrows · mouse · tap</td></tr>
     <tr><td>Confirm</td><td>A / ✕ · Enter · click · tap again</td></tr>
