@@ -2,6 +2,8 @@
 // compact text codes (gzipped, base64) that can be copied and pasted anywhere — the
 // Android app and some browsers can't download files, but every one can paste.
 const isAndroidApp = () => !!(window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'android');
+// embedded previews (a sandboxed frame) usually can't download either
+const isFramed = () => { try { return window.self !== window.top; } catch { return true; } };
 
 export async function toCode(obj, tag = 'MF1') {
   const json = JSON.stringify(obj);
@@ -41,7 +43,7 @@ export async function copyText(text) {
 // Save a file (download dialog on PC and browsers). Returns 'saved', 'copied' or 'failed'.
 export async function saveFile(name, obj) {
   const text = JSON.stringify(obj);
-  if (!isAndroidApp()) {
+  if (!isAndroidApp() && !isFramed()) {
     try {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
