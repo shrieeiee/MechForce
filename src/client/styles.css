@@ -632,3 +632,4 @@ table.tt td { padding: 2px 8px 2px 0; vertical-align: top; } table.tt td:first-c
 .mlabel .shape { font-size: 13px; line-height: 1; }
 .keys-dlg { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 60px); overflow-y: auto; }
 .keys-dlg .key-list { gap: 4px; }
+.xfer-dlg { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 60px); overflow-y: auto; } .xfer-dlg .row.wrap { flex-wrap: wrap; gap: 8px; }

@@ -28,6 +28,7 @@ import { saveReplay } from './replaystore.js';
 import { view as palView, paint } from './palette.js';
 import { setKeyOverrides, KEY_ACTIONS, keyFor, keyName } from './input.js';
 import { showReplays, watchReplay } from './replays.js';
+import { showTransfer } from './transfer.js';
 import { showCampaign, loadCompany, saveCompany, campaignDebriefHTML } from './campaign.js';
 import { settle, enemyLance, templateOf } from '../core/campaign.js';
 import { patch, jclone } from '../core/delta.js';
@@ -956,6 +957,9 @@ class App {
       const kb = html('<div class="btn nav" data-key="keys">Keyboard controls…<span class="val">Rebind keys</span></div>');
       kb.addEventListener('click', () => this.showKeys(() => render()));
       box.appendChild(kb);
+      const mv = html('<div class="btn nav" data-key="transfer">Move to another device…<span class="val">Pilots, maps, mechs, company</span></div>');
+      mv.addEventListener('click', () => showTransfer(this, () => render()));
+      box.appendChild(mv);
       const adv = html(`<div class="panel pad stack"><div class="eyebrow">Online play (advanced)</div>
         <div class="field"><label for="sturn">TURN relay for strict networks</label><input id="sturn" class="nav" data-key="turn" placeholder="turn:user:password@relay.example.com:3478" value="${esc(s.turn || '')}" autocomplete="off" spellcheck="false"></div>
         <div class="field"><label for="ssig">Matchmaking server (blank = free public PeerJS server)</label><input id="ssig" class="nav" data-key="signal" placeholder="https://my-peerjs-server.example.com/" value="${esc(s.signal || '')}" autocomplete="off" spellcheck="false"></div>

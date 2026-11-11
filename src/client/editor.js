@@ -11,6 +11,8 @@ import { $, $$, html, esc, toast, glyphHTML } from './ui.js';
 import { attr, structTip, forceTip } from './tips.js';
 import { sfx, music } from './audio.js';
 import { loadMaps, saveMap, deleteMap } from './mapstore.js';
+import { toCode, fromCode, copyText } from './files.js';
+import { pasteDialog } from './replays.js';
 
 const TOOLS = [
   { id: 'paint', name: 'Terrain', tip: '<p>Paint ground: clear, woods, rough or water. Water is always at ground level; deep water can\'t go in the deployment zones.</p>' },
@@ -264,7 +266,7 @@ export function showEditor(app, { map: startMap, onExit } = {}) {
     const list = loadMaps();
     const el = html(`<div class="panel pad stack modal ed-load"><div class="eyebrow">Saved maps</div>
       ${list.length ? '' : '<div class="faint">No saved maps on this device yet.</div>'}<div class="stack ed-list"></div>
-      <div class="row"><div class="btn nav" data-key="new-random">New random map</div><div class="btn nav" data-key="new-blank">New blank map</div><div class="btn nav" data-key="close">Cancel</div></div></div>`);
+      <div class="row"><div class="btn nav" data-key="paste-code">Paste map code…</div><div class="btn nav" data-key="new-random">New random map</div><div class="btn nav" data-key="new-blank">New blank map</div><div class="btn nav" data-key="close">Cancel</div></div></div>`);
     const lst = $('.ed-list', el);
     list.forEach((m, i) => {
       const row = html(`<div class="row ed-maprow"><div class="btn nav grow" data-key="load-${i}">${esc(m.name)}<span class="val">${esc(MAP_SIZES.find((z) => z.id === m.size).name)} · ${esc(THEMES.find((t) => t.id === m.theme).name)} · ${m.s.length} structures</span></div><div class="btn nav" data-key="del-${i}" title="Delete">Delete</div></div>`);
@@ -275,6 +277,14 @@ export function showEditor(app, { map: startMap, onExit } = {}) {
     $('[data-key=new-random]', el).addEventListener('click', () => { snapshot(); const g = generateMap('ed' + Math.random().toString(36).slice(2, 7), map.size, map.theme); map = sanitizeMap({ ...g, size: map.size, theme: map.theme, name: 'New map', s: [] }); ed.saved = false; app.closeModal(); rebuildAll(); render(); });
     $('[data-key=new-blank]', el).addEventListener('click', () => { snapshot(); map = blankMap(map.size, map.theme, 'New map'); ed.saved = false; app.closeModal(); rebuildAll(); render(); });
     $('[data-key=close]', el).addEventListener('click', () => app.closeModal());
+    $('[data-key=paste-code]', el).addEventListener('click', () => {
+      app.closeModal();
+      pasteDialog(app, 'Paste a map code', async (code) => {
+        const m = sanitizeMap(await fromCode(code));
+        if (!m) throw new Error('That code isn\'t a map');
+        snapshot(); map = m; ed.saved = false; rebuildAll(); render(); toast(`Loaded “${m.name}” — save it to keep it`, true);
+      });
+    });
     app.openModal(el, { onBack: () => app.closeModal(), prompts: [{ a: 'confirm', label: 'Select' }, { a: 'back', label: 'Back' }] });
   };
   let delArm = null;
@@ -297,7 +307,7 @@ export function showEditor(app, { map: startMap, onExit } = {}) {
     const el = html(`<div class="panel pad stack modal ed-menu"><div class="eyebrow">Map editor</div>
       <div class="field"><label for="mname">Map name</label><input id="mname" class="nav" data-key="name" maxlength="24" value="${esc(map.name)}" autocomplete="off"></div>
       <div class="stack opts"></div>
-      <div class="row wrap"><div class="btn primary nav" data-key="play">Save & play</div><div class="btn nav" data-key="save">Save</div><div class="btn nav" data-key="load">Open / new…</div><div class="btn nav" data-key="resume">Back to editing</div><div class="btn nav" data-key="quit">Exit editor</div></div></div>`);
+      <div class="row wrap"><div class="btn primary nav" data-key="play">Save & play</div><div class="btn nav" data-key="save">Save</div><div class="btn nav" data-key="load">Open / new…</div><div class="btn nav" data-key="share">Copy map code</div><div class="btn nav" data-key="resume">Back to editing</div><div class="btn nav" data-key="quit">Exit editor</div></div></div>`);
     const opts = $('.opts', el);
     const opt = (key, label, value, fn, tip) => { const b = html(`<div class="btn nav" data-key="${key}" ${tip ? attr(label, tip) : ''}>${esc(label)}<span class="val arrows">${esc(value)}</span></div>`); b.addEventListener('click', () => { fn(); app.closeModal(); menu(); }); opts.appendChild(b); };
     opt('o-size', 'Size', MAP_SIZES.find((z) => z.id === map.size).name, () => setSize(MAP_SIZES[(MAP_SIZES.findIndex((z) => z.id === map.size) + 1) % MAP_SIZES.length].id), '<p>Growing a map keeps what you built and adds empty ground; shrinking crops the right and bottom edges.</p>');
@@ -314,6 +324,7 @@ export function showEditor(app, { map: startMap, onExit } = {}) {
     $('[data-key=play]', el).addEventListener('click', () => { app.closeModal(); play(); });
     $('[data-key=save]', el).addEventListener('click', () => { app.closeModal(); trySave(); });
     $('[data-key=load]', el).addEventListener('click', () => { app.closeModal(); loadDialog(); });
+    $('[data-key=share]', el).addEventListener('click', async () => { const m = sanitizeMap(map); toast(m && (await copyText(await toCode(m))) ? 'Map code copied — anyone can paste it into their editor' : 'Couldn\'t copy the map', true); });
     $('[data-key=resume]', el).addEventListener('click', () => app.closeModal());
     $('[data-key=quit]', el).addEventListener('click', () => { app.closeModal(); leave(); });
     app.openModal(el, { onBack: () => app.closeModal(), prompts: [{ a: 'confirm', label: 'Select' }, { a: 'back', label: 'Back' }] });
