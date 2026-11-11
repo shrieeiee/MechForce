@@ -2,7 +2,7 @@
 // The same code runs on the host server, in local games, and inside the AI.
 import { MECHS, WEAPONS, MISSIONS, TERRAIN, FRONT_ZONE, REAR_ZONE, TRANSFER, critName, locName,
   SIDE_COLORS, SIDE_NAMES, PILOT_NAMES, mechByName, bodyOf, legLocs, LEG_ACT, CODE_TRACKS, CODE_CONVERSION,
-  STRUCTS, LOADOUTS, STRUCT_GUNNERY, CLIMATE, UNITS, UNIT_GUNNERY } from './data.js';
+  STRUCTS, LOADOUTS, STRUCT_GUNNERY, CLIMATE, UNITS, UNIT_GUNNERY, AI_LEVELS } from './data.js';
 import { sanitizeMap, addDefences, addForces, unitCanStand } from './maps.js';
 import { generateMap, deployZone, inMap } from './map.js';
 import { buildTemplate, WSTAT } from './custom.js';
@@ -23,7 +23,7 @@ export function createGame(setup) {
   if (custom && setup.theme) map.theme = setup.theme;
   const st = {
     v: 1, seed, gid: String(setup.gid || 'g' + seed), rng: hashSeed('dice' + seed), mission: mission.id, map, round: 0, over: false, fog: !!setup.fog, seen: {},
-    structures: [], units: [], fire: {}, smoke: {}, wind: 0,
+    structures: [], units: [], fire: {}, smoke: {}, wind: 0, aiLevel: AI_LEVELS[setup.aiLevel] ? setup.aiLevel : 'normal',
     sides: [], teams: [], mechs: [], order: [], turnIdx: 0, act: null, item: null, winner: null, log: [], seq: 0,
   };
   const teamOfSide = assignTeams(setup.sides.slice(0, nSides), mission);
@@ -47,7 +47,8 @@ export function createGame(setup) {
     st.sides.push({
       name: sd.name || SIDE_NAMES[s], color: sd.color || SIDE_COLORS[s], ctrl: sd.ctrl || 'ai', init: 0, team,
       goal: mission.goal[Math.min(role, mission.goal.length - 1)], brief: mission.brief[Math.min(role, mission.brief.length - 1)],
-      conceded: false, gunnery: sd.gunnery ?? 4, piloting: sd.piloting ?? 5,
+      conceded: false, gunnery: sd.ctrl === 'ai' && AI_LEVELS[setup.aiLevel] ? AI_LEVELS[setup.aiLevel].gun : sd.gunnery ?? 4,
+      piloting: sd.ctrl === 'ai' && AI_LEVELS[setup.aiLevel] ? AI_LEVELS[setup.aiLevel].pil : sd.piloting ?? 5,
     });
   }
   st.teams.forEach((tm) => {

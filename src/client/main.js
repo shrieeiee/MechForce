@@ -19,7 +19,7 @@ import { LocalSession, RemoteSession, wsUrlFor, PeerHostSession, PeerClientSessi
 export const IS_ARTIFACT = typeof __MF_ARTIFACT__ !== 'undefined' && __MF_ARTIFACT__;
 export const PUBLIC_URL = 'https://shrieeiee.github.io/MechForce/';
 import { native, isCapacitor, servedByHost, secureBrowser, platformName, canHost, canQuit, discover } from './platform.js';
-import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mechBV, CLIMATE } from '../core/data.js';
+import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mechBV, CLIMATE, AI_LEVELS, AI_LEVEL_IDS } from '../core/data.js';
 import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
 import { totalArmor, maxArmor, pilotingTN, reactorBlast, SELF_DESTRUCT_TN } from '../core/rules.js';
 import { loadMaps } from './mapstore.js';
@@ -453,6 +453,8 @@ class App {
       { k: 'theme', label: 'Terrain', value: THEMES.find((t) => t.id === L.settings.theme).name, opts: THEMES.map((t) => t.id), tip: '<p>' + esc(CLIMATE[L.settings.theme]?.text || '') + '</p>' },
       { k: 'defences', label: 'Defences', value: { none: 'None', light: 'Light', heavy: 'Heavy' }[L.settings.defences || 'none'], opts: ['none', 'light', 'heavy'],
         tip: '<p>Fortify each side\'s deployment edge. <b>Light</b>: two gun emplacements per side. <b>Heavy</b>: a bunker and three emplacements. They fire on their own at the end of every round, and can be shot down.</p>' });
+    defs.push({ k: 'aiLevel', label: 'Computer skill', value: AI_LEVELS[L.settings.aiLevel || 'normal'].name, opts: AI_LEVEL_IDS,
+      tip: '<p>How well computer-controlled mechs fight. <b>Easy</b>: green pilots (gunnery 5, piloting 6) who make mistakes. <b>Normal</b>: regulars (4/5). <b>Hard</b>: veterans (3/4) who focus fire and press harder. <b>Veteran</b>: elites (2/3), relentless.</p>' });
     defs.push({ k: 'forces', label: 'Ground forces', value: { none: 'None', few: 'Few', many: 'Many' }[L.settings.forces || 'none'], opts: ['none', 'few', 'many'],
       tip: '<p>Infantry platoons and combat vehicles, run by the computer. Each side gets support near its edge, and local militia guard the middle of the map, firing on any mech that comes close. <b>Few</b>: one per side and two local units. <b>Many</b>: twice that.</p><p>They move and shoot at the end of every round. Machine guns and flamers are the answer to infantry.</p>' });
     if (cm) defs.push({ k: 'mapinfo', label: 'Battlefield', value: `${MAP_SIZES.find((s) => s.id === cm.size).name} · ${THEMES.find((t) => t.id === cm.theme).name}`, opts: [], fixed: true });

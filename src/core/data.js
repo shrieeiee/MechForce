@@ -131,6 +131,15 @@ export const UNITS = {
 };
 export const UNIT_KINDS = Object.keys(UNITS);
 export const UNIT_GUNNERY = 4;
+// Computer opponent levels: their pilots' skills, how much they hedge and wander (noise),
+// how hard they press as time runs short, and whether they gang up on the weakest target.
+export const AI_LEVELS = {
+  easy: { name: 'Easy', gun: 5, pil: 6, noise: 1.2, caution: 1.1, focus: 0, pressureFrom: 14, slip: 0.3 },
+  normal: { name: 'Normal', gun: 4, pil: 5, noise: 0.3, caution: 1, focus: 0.25, pressureFrom: 12, slip: 0 },
+  hard: { name: 'Hard', gun: 3, pil: 4, noise: 0.15, caution: 0.85, focus: 0.6, pressureFrom: 9, slip: 0 },
+  veteran: { name: 'Veteran', gun: 2, pil: 3, noise: 0.08, caution: 0.75, focus: 0.9, pressureFrom: 6, slip: 0 },
+};
+export const AI_LEVEL_IDS = Object.keys(AI_LEVELS);
 export const MOTION_NAMES = { foot: 'Foot infantry', jump: 'Jump infantry', hover: 'Hovercraft', wheeled: 'Wheeled', tracked: 'Tracked' };
 
 // ---- climate: heat added (or removed) at the end of every activation, after TacOps'

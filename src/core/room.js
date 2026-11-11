@@ -2,7 +2,7 @@
 // (LAN host / dedicated / internet) and in-process for single player & hotseat.
 import { createGame, applyCommand, activeSide } from './rules.js';
 import { aiNextCommand } from './ai.js';
-import { MECHS, MISSIONS, PROTOCOL, VERSION, SIDE_NAMES, SIDE_COLORS, mechBV } from './data.js';
+import { MECHS, MISSIONS, PROTOCOL, VERSION, SIDE_NAMES, SIDE_COLORS, mechBV, AI_LEVEL_IDS } from './data.js';
 import { sanitizePilot } from './pilots.js';
 import { buildTemplate } from './custom.js';
 import { fogView, fogEvents, viewTeams } from './fog.js';
@@ -65,7 +65,7 @@ export class Room {
     this.local = local;
     this.clients = new Map();
     this.hostId = null;
-    this.settings = { mission: 'generic', mapSize: 'M', theme: 'temperate', tonnage: 200, seed: rid(), sides: 2, lanceSize: 4, teamMode: 'ffa', fog: false, defences: 'none', forces: 'none', customMap: null };
+    this.settings = { mission: 'generic', mapSize: 'M', theme: 'temperate', tonnage: 200, seed: rid(), sides: 2, lanceSize: 4, teamMode: 'ffa', fog: false, defences: 'none', forces: 'none', aiLevel: 'normal', customMap: null };
     this.slots = [];
     this.game = null;
     this.aiTimer = null;
@@ -189,10 +189,11 @@ export class Room {
       case 'settings': {
         if (!isHost || this.game) return err('Only the host can change settings');
         const s = msg.settings || {};
-        for (const k of ['mission', 'mapSize', 'theme', 'tonnage', 'seed', 'sides', 'lanceSize', 'teamMode', 'fog', 'defences', 'forces']) if (s[k] !== undefined) this.settings[k] = s[k];
+        for (const k of ['mission', 'mapSize', 'theme', 'tonnage', 'seed', 'sides', 'lanceSize', 'teamMode', 'fog', 'defences', 'forces', 'aiLevel']) if (s[k] !== undefined) this.settings[k] = s[k];
         this.settings.fog = !!this.settings.fog;
         if (!['none', 'light', 'heavy'].includes(this.settings.defences)) this.settings.defences = 'none';
         if (!['none', 'few', 'many'].includes(this.settings.forces)) this.settings.forces = 'none';
+        if (!AI_LEVEL_IDS.includes(this.settings.aiLevel)) this.settings.aiLevel = 'normal';
         if (s.mapSize !== undefined && s.customMap === undefined) this.settings.customMap = null;
         // a battlefield from the map editor (checked here so a bad map can't break the game)
         if (s.customMap !== undefined) {
@@ -272,7 +273,7 @@ export class Room {
         if (problems.length) return err(problems[0]);
         this.game = createGame({
           seed: this.settings.seed, mission: this.settings.mission, mapSize: this.settings.mapSize, theme: this.settings.theme, fog: !!this.settings.fog,
-          customMap: this.settings.customMap || null, defences: this.settings.defences, forces: this.settings.forces,
+          customMap: this.settings.customMap || null, defences: this.settings.defences, forces: this.settings.forces, aiLevel: this.settings.aiLevel,
           gid: rid() + rid(),
           sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5, pilots: sl.ctrl === 'ai' ? [] : sl.pilots || [] })),
         });

@@ -2,7 +2,7 @@
 import { WEAPONS, TERRAIN } from './data.js';
 import { computeReach, canEndAt, toHit, availableMechs, operational, canAct, lineOfSight, inArc, missionOf,
   expectedDamage, dissipation, totalArmor, maxArmor, tileOf, toHitUnit, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo, toHitStructure, envHeat, smokeAt, isBurning, defenceTargets, dfaDamage, dfaSelfDamage, pilotingMods, elevOf } from './rules.js';
-import { STRUCTS } from './data.js';
+import { STRUCTS, AI_LEVELS } from './data.js';
 import { distance, relBearing } from './hex.js';
 import { chance, nextRand } from './rng.js';
 
@@ -66,7 +66,18 @@ function bestVolley(opts, budget) {
   return { dmg, heat, picked };
 }
 
+// How the computer plays this battle, and how hard it presses as the clock runs down:
+// 0 early on, rising to 1 by the last round
+const levelOf = (st) => AI_LEVELS[st.aiLevel] || AI_LEVELS.normal;
+function pressureOf(st) {
+  const L = levelOf(st);
+  const limit = missionOf(st).rounds || 30;
+  return Math.max(0, Math.min(1, (st.round - L.pressureFrom) / Math.max(4, limit - L.pressureFrom)));
+}
+
 function evalPositions(st, m) {
+  const L = levelOf(st);
+  const pressure = pressureOf(st);
   const enemies = knownEnemies(st, m);
   const allies = st.mechs.filter((e) => operational(e) && e.team === m.team && e.id !== m.id);
   const goal = goalFor(st, m) || (st.fog && !enemies.length ? searchGoal(st, m) : null);
@@ -191,7 +202,8 @@ function evalPositions(st, m) {
         }
         // the ground itself: fire, magma, climate
         const envH = envHeat(st, { ...m, x, y });
-        let score = offense * 1.2 - threat * (0.35 + (1 - fragile) * 0.5) + convBias - Math.max(0, envH) * 1.6 - (isBurning(st, x, y) ? 4 : 0);
+        // caution falls as the clock runs down, so battles end with a decision
+        let score = offense * 1.2 - threat * (0.35 + (1 - fragile) * 0.5) * L.caution * (1 - pressure * 0.5) + convBias - Math.max(0, envH) * 1.6 - (isBurning(st, x, y) ? 4 : 0);
         if (goal) {
           const gd = goal.edge ? (goal.edge === 'E' ? w - 1 - x : x) : distance(x, y, goal.x, goal.y);
           score -= gd * goal.weight;
@@ -200,6 +212,10 @@ function evalPositions(st, m) {
           let nd = 99;
           for (const it of info) nd = Math.min(nd, it.d);
           score -= Math.abs(nd - optRange) * 0.8;
+          // late in the battle, close in on the nearest enemy rather than trading shots at range
+          score -= nd * pressure * 0.7;
+          // nobody in sight: don't sit behind a hill, find a firing line
+          if (offense === 0) score -= 1.5 + nd * 0.15;
         }
         // stay near friends, avoid deep water, prefer high ground
         if (allies.length) {
@@ -209,7 +225,7 @@ function evalPositions(st, m) {
         }
         score += st.map.e[y * w + x] * 0.4;
         if (m.heat + mvHeat + envH - dissipation(st, { ...m, x, y }) > 8) score -= (m.heat + mvHeat + envH - dissipation(st, { ...m, x, y }) - 8) * 1.5;
-        score += nextRand({ rng: (x * 73856093) ^ (y * 19349663) ^ (f * 83492791) ^ st.seq }) * 0.3;
+        score += nextRand({ rng: (x * 73856093) ^ (y * 19349663) ^ (f * 83492791) ^ st.seq }) * L.noise;
         if (score > best.score) best.score = score, best.cmd = { type: 'move', id: m.id, x, y, f, mode, ...(convert ? { convert: true } : {}) };
       }
     }
@@ -219,8 +235,10 @@ function evalPositions(st, m) {
 function moveModE(e) { return moveMod(moveKind(e.lastMove.mode), e.lastMove.hexes) + (e.prone ? 1 : 0); }
 
 function chooseAttack(st, m) {
+  const L = levelOf(st);
   const enemies = knownEnemies(st, m);
   let best = { v: 0, cmd: null };
+  const cands = [];
   const budget = dissipation(st, m) - m.heat - (st.act ? st.act.heatGen : 0) + 5;
   for (const e of enemies) {
     const opts = [];
@@ -232,7 +250,10 @@ function chooseAttack(st, m) {
     if (opts.length) {
       const killable = totalArmor(e) < 25;
       const v = bestVolley(opts, killable ? budget + 6 : budget);
-      let val = v.dmg * (killable ? 1.5 : 1) * (st.item && st.item.carrier === e.id ? 1.6 : 1);
+      // focus fire: better pilots finish what their lancemates started
+      const hurt = 1 - totalArmor(e) / maxArmor(e);
+      let val = v.dmg * (killable ? 1.5 : 1) * (st.item && st.item.carrier === e.id ? 1.6 : 1) * (1 + hurt * L.focus);
+      if (v.picked.length) cands.push({ v: val, cmd: { type: 'attack', id: m.id, target: e.id, weapons: v.picked.map((o) => o.w.i) } });
       if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, target: e.id, weapons: v.picked.map((o) => o.w.i) } };
     }
     for (const kind of ['kick', 'punch', 'dfa']) {
@@ -275,6 +296,11 @@ function chooseAttack(st, m) {
     const armed = s.team >= 0 && s.weapons.some((w) => w.ok && w.ammo !== 0);
     const val = v.dmg * (armed ? (s.cf <= v.dmg * 1.5 ? 0.9 : 0.6) : 0.15);
     if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, structure: s.id, weapons: v.picked.map((o) => o.w.i) } };
+  }
+  // green pilots don't always pick the best shot
+  if (L.slip && cands.length > 1 && best.cmd && best.cmd.target !== undefined && nextRand({ rng: (m.id * 7919) ^ st.seq ^ 0x5bd1e995 }) < L.slip) {
+    cands.sort((a, b) => b.v - a.v);
+    return cands[1].cmd;
   }
   return best.cmd || { type: 'end', id: m.id };
 }
