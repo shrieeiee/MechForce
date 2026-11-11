@@ -1,4 +1,5 @@
 // Death from above and exploding mechs. Run: node test/dfa.mjs
+import './seed.mjs';
 import { createGame, applyCommand, activeSide, toHit, dfaDamage, dfaSelfDamage, reactorBlast, __test } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';
 

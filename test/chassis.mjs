@@ -1,5 +1,6 @@
 // Rules checks for four-legged mechs, tripods, BattleMech tracks and QuadVees, plus AI games
 // that use them. Run: node test/chassis.mjs
+import './seed.mjs';
 import { createGame, applyCommand, activeSide, computeReach, reachKey, toHit, walkMP, runMP, trackMP, flankMP,
   pilotingTN, legState, moveModes, applyDamage, canConvert, conversionCost } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';

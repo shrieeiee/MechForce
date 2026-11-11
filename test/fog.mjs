@@ -1,5 +1,6 @@
 // Fog of war checks: visibility, last-seen memory, what each player is sent, and AI games.
 // Run: node test/fog.mjs
+import './seed.mjs';
 import { createGame, applyCommand, activeSide, visibleTo, hexSeenBy, lineOfSight } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';
 import { fogView, fogEvents } from '../src/core/fog.js';

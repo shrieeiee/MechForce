@@ -1,4 +1,5 @@
 // Mercenary campaign: company, contracts, damage carry-over, settlement, repairs, market.
+import './seed.mjs';
 import { createGame, applyCommand, activeSide } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';
 import { newCompany, mechState, enemyLance, settle, repair, sellMech, buyMech, templateOf, mechPrice, bankrupt, START_CBILLS } from '../src/core/campaign.js';

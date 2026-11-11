@@ -1,4 +1,5 @@
 // Infantry and vehicles: setup, damage rules, AI games. Run: node test/units.mjs
+import './seed.mjs';
 import { createGame, applyCommand, activeSide, toHitUnit, unitAt, computeReach } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';
 import { fogView, fogEvents } from '../src/core/fog.js';

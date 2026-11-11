@@ -1,4 +1,5 @@
 // Replays: the host records every command; playing them back reproduces the battle exactly.
+import './seed.mjs';
 import { Room } from '../src/core/room.js';
 import { replayPlayer, validReplay } from '../src/core/replay.js';
 

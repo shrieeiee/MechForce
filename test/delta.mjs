@@ -1,4 +1,5 @@
 // State deltas: patch(prev, diff(prev, next)) must equal next for real game states, and be small.
+import './seed.mjs';
 import { createGame, applyCommand, activeSide } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';
 import { fogView } from '../src/core/fog.js';

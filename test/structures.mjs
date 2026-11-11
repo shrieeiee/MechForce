@@ -1,5 +1,6 @@
 // Structures, defensive fire and terrain effects (fire, smoke, water, magma, climate), plus
 // AI games on fortified maps. Run: node test/structures.mjs
+import './seed.mjs';
 import { createGame, applyCommand, activeSide, computeReach, reachKey, lineOfSight, toHit, toHitStructure, structureAt,
   envHeat, isBurning, smokeAt, dissipation } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';

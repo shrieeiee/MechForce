@@ -1,3 +1,4 @@
+import './seed.mjs';
 import { createGame, applyCommand, activeSide } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';
 import { MECHS, MISSIONS } from '../src/core/data.js';

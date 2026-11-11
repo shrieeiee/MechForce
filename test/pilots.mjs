@@ -1,4 +1,5 @@
 // Persistent pilots: abilities, ejection, self-destruct, experience. Run: node test/pilots.mjs
+import './seed.mjs';
 import { createGame, applyCommand, activeSide, toHit, pilotingTN, __test } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';
 import { sanitizePilot, newPilot, applyBattle, battleXP, improve, canImprove, restBattle, BACKGROUNDS, ABILITIES, GUN_COST } from '../src/core/pilots.js';
@@ -14,8 +15,9 @@ const flat = (st) => { for (let i = 0; i < st.map.t.length; i++) { st.map.t[i] =
   ok(p.gun === 1 && p.pil === 8 && p.abilities.join() === 'sniper,melee,ace' && p.name === 'Acescript' && p.portrait.skin === 15, 'pilot values clamped, abilities deduped and capped at 3');
 }
 // ---- pilots reach the battle, abilities change the numbers
+let duelN = 0;
 const duel = (pa, pb, a = 'Griffin', b = 'Griffin') => {
-  const st = createGame({ seed: 'pil' + Math.random(), mission: 'generic', mapSize: 'M', theme: 'temperate', sides: [{ ctrl: 'a', lance: [a], pilots: [pa] }, { ctrl: 'b', lance: [b], pilots: [pb] }] });
+  const st = createGame({ seed: 'pil' + (++duelN), mission: 'generic', mapSize: 'M', theme: 'temperate', sides: [{ ctrl: 'a', lance: [a], pilots: [pa] }, { ctrl: 'b', lance: [b], pilots: [pb] }] });
   flat(st);
   const [m, e] = st.mechs; m.x = 4; m.y = 8; m.f = 0; e.x = 10; e.y = 8; e.f = 3;
   st.order = [0, 1]; st.turnIdx = 0; st.act = null;

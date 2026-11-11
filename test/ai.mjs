@@ -1,4 +1,5 @@
 // Computer skill levels: pilots get the level's skills, and battles reach a decision.
+import './seed.mjs';
 import { createGame, applyCommand, activeSide } from '../src/core/rules.js';
 import { aiNextCommand } from '../src/core/ai.js';
 import { AI_LEVELS } from '../src/core/data.js';
