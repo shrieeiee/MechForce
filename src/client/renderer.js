@@ -85,6 +85,11 @@ export class Renderer {
     const dpr = Math.min(window.devicePixelRatio || 1, q === 'high' ? 2 : q === 'medium' ? 1.5 : 1);
     this.gl.setPixelRatio(q === 'low' ? Math.min(1, dpr) : dpr);
     this.gl.shadowMap.enabled = q !== 'low';
+    // the sun covers the whole map and never moves, so the shadow map only needs redrawing
+    // when something moves: every frame while animating, a few times a second otherwise
+    this.gl.shadowMap.autoUpdate = false; this.gl.shadowMap.needsUpdate = true;
+    this.shadowEvery = q === 'high' ? [1, 4] : [2, 8];
+    if (this.terrainGroup) this.terrainGroup.traverse((o) => { if (o.userData.tree) o.castShadow = q === 'high'; });
     this.sun.castShadow = q !== 'low';
     this.sun.shadow.mapSize.set(q === 'high' ? 2048 : 1024, q === 'high' ? 2048 : 1024);
     if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
@@ -219,7 +224,7 @@ export class Renderer {
         m4.compose(p, q, sc); im.setMatrixAt(i, m4); it.setMatrixAt(i, m4);
         im.setColorAt(i, new THREE.Color(tr.dark ? th.tree[1] : th.tree[0]).offsetHSL(0, 0, (rnd(i) - 0.5) * 0.08));
       });
-      im.castShadow = true; im.receiveShadow = true; it.castShadow = true;
+      im.castShadow = this.quality === 'high'; im.receiveShadow = true; it.castShadow = this.quality === 'high'; im.userData.tree = true; it.userData.tree = true;
       tg.add(im, it);
     }
     if (rocks.length) {
@@ -990,6 +995,11 @@ export class Renderer {
       if (s.behind || m.exited || s.x < rect.left - 50 || s.x > rect.right + 50) v.label.style.display = 'none';
       else { v.label.style.display = ''; v.label.style.transform = `translate(${s.x - rect.left}px, ${s.y - rect.top}px) translate(-50%, -100%)`; v.label.classList.toggle('act', !!v.active); }
     }
+    if (this.gl.shadowMap.enabled) {
+      this.frameNo = (this.frameNo || 0) + 1;
+      const busy = this.tweens > 0 || this.pendingAnims > 0;
+      if (this.frameNo % (this.shadowEvery || [1, 4])[busy ? 0 : 1] === 0) this.gl.shadowMap.needsUpdate = true;
+    }
     if (this.composer && this.quality !== 'low') this.composer.render(dt);
     else this.gl.render(this.scene, this.camera);
   }
@@ -1132,12 +1142,13 @@ export class Renderer {
   }
 
   tween(ms, fn) {
+    this.tweens = (this.tweens || 0) + 1;
     return new Promise((resolve) => {
       const t0 = performance.now();
       const step = () => {
         const k = Math.min(1, (performance.now() - t0) / ms);
         fn(k);
-        if (k < 1) requestAnimationFrame(step); else resolve();
+        if (k < 1) requestAnimationFrame(step); else { this.tweens--; this.gl.shadowMap.needsUpdate = true; resolve(); }
       };
       step();
     });

@@ -34,7 +34,7 @@ export function weaponSize(t) { return [3, 5, 7, 9, 1, 3, 5, 7, 9, 2, 3, 4, 1, 2
 export function mechMaterials(colorHex) {
   const base = new THREE.Color(colorHex);
   const body = base.clone().lerp(new THREE.Color('#9aa3ad'), 0.5);
-  return {
+  const m = {
     body: new THREE.MeshStandardMaterial({ color: body, metalness: 0.55, roughness: 0.48 }),
     trim: new THREE.MeshStandardMaterial({ color: base, metalness: 0.4, roughness: 0.42, emissive: base, emissiveIntensity: 0.08 }),
     dark: new THREE.MeshStandardMaterial({ color: '#262b31', metalness: 0.7, roughness: 0.5 }),
@@ -48,6 +48,9 @@ export function mechMaterials(colorHex) {
     lensS: glowMat('#ff8a3c'), lensM: glowMat('#ff4d9a'), lensL: glowMat('#ff3b5c'), lensB: glowMat('#7fc8ff', 2), flame: glowMat('#ffb02e', 2.2),
     tube: new THREE.MeshStandardMaterial({ color: '#0c0d0f', roughness: 0.9 }), warhead: glowMat('#d8402a', 0.5),
   };
+  // these glow with heat and go dark on shutdown, so they keep their own material
+  m.vent.userData.live = true; m.glass.userData.live = true;
+  return m;
 }
 
 // --------------------------------------------------------------------------- weapons
@@ -104,7 +107,7 @@ export function weaponPart(t, s, mats) {
     len = 0.21 * s;
   } else if (t === 16) { // ---- plasma cannon: twin rails, coils and a charging core
     const L = 0.46 * s;
-    const coreMat = mats.lensB.clone(); coreMat.userData.base = coreMat.emissiveIntensity;
+    const coreMat = mats.lensB.clone(); coreMat.userData.base = coreMat.emissiveIntensity; coreMat.userData.live = true;
     add(plate(0.1 * s, 0.09 * s, 0.12 * s), mats.dark, 0, 0, 0.04 * s);
     const core = add(sphere(0.032 * s, 12, 10), coreMat, 0, 0, 0.05 * s); core.userData.keep = true;
     for (const sx of [-1, 1]) add(plate(0.018 * s, 0.03 * s, L), mats.chrome, sx * 0.028 * s, 0, 0.1 * s + L / 2);
@@ -162,22 +165,66 @@ export function tickWeaponAnims(model, dt, time) {
 }
 
 // --------------------------------------------------------------------------- body
+// One material for every rigid part of every model: each vertex carries its own colour,
+// glow, metalness and roughness, so all the static parts under one moving joint collapse
+// into a single mesh — a single draw call — whatever they're made of.
+export const BAKED_MAT = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 1, roughness: 1, emissive: '#ffffff' });
+BAKED_MAT.onBeforeCompile = (sh) => {
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute vec2 mr;\nattribute vec3 emi;\nvarying vec2 vMR;\nvarying vec3 vEmi;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMR = mr; vEmi = emi;');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nvarying vec2 vMR;\nvarying vec3 vEmi;')
+    .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = metalness * vMR.x;')
+    .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = roughness * vMR.y;')
+    .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance = vEmi * emissive;');
+};
+BAKED_MAT.customProgramCacheKey = () => 'baked-v1';
+const bakeable = (m) => m && m.isMeshStandardMaterial && !m.userData.live && !m.transparent && !m.map && !m.vertexColors;
+function bakeGeo(mesh) {
+  mesh.updateMatrix();
+  const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+  for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+  if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+  g.clearGroups();
+  g.applyMatrix4(mesh.matrix);
+  return g;
+}
 function mergeStatic(obj) {
   for (const c of obj.children) if (!c.isMesh) mergeStatic(c);
   const byMat = new Map();
-  for (const c of obj.children) if (c.isMesh && !c.userData.keep) { const k = c.material.uuid; if (!byMat.has(k)) byMat.set(k, []); byMat.get(k).push(c); }
-  for (const list of byMat.values()) {
-    if (list.length < 2) continue;
-    const geos = list.map((m) => {
-      m.updateMatrix();
-      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-      for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
-      if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
-      g.clearGroups();
-      g.applyMatrix4(m.matrix);
+  const baked = [];
+  for (const c of obj.children) {
+    if (!c.isMesh || c.isInstancedMesh || c.userData.keep) continue;
+    if (bakeable(c.material)) { baked.push(c); continue; }
+    const k = c.material.uuid; if (!byMat.has(k)) byMat.set(k, []); byMat.get(k).push(c);
+  }
+  if (baked.length) {
+    const geos = baked.map((m) => {
+      const g = bakeGeo(m);
+      const n = g.attributes.position.count, M = m.material;
+      const col = new Float32Array(n * 3), mr = new Float32Array(n * 2), emi = new Float32Array(n * 3);
+      const e = M.emissive ? M.emissive.clone().multiplyScalar(M.emissiveIntensity ?? 1) : new THREE.Color(0, 0, 0);
+      for (let i = 0; i < n; i++) {
+        col[i * 3] = M.color.r; col[i * 3 + 1] = M.color.g; col[i * 3 + 2] = M.color.b;
+        mr[i * 2] = M.metalness; mr[i * 2 + 1] = M.roughness;
+        emi[i * 3] = e.r; emi[i * 3 + 1] = e.g; emi[i * 3 + 2] = e.b;
+      }
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.setAttribute('mr', new THREE.Float32BufferAttribute(mr, 2));
+      g.setAttribute('emi', new THREE.Float32BufferAttribute(emi, 3));
       return g;
     });
-    const merged = mergeGeometries(geos, false);
+    const merged = geos.length > 1 ? mergeGeometries(geos, false) : geos[0];
+    if (merged) {
+      const mesh = new THREE.Mesh(merged, BAKED_MAT);
+      obj.add(mesh);
+      for (const m of baked) obj.remove(m);
+    }
+  }
+  for (const list of byMat.values()) {
+    if (list.length < 2) continue;
+    const merged = mergeGeometries(list.map(bakeGeo), false);
     if (!merged) continue;
     const mesh = new THREE.Mesh(merged, list[0].material);
     obj.add(mesh);
@@ -607,6 +654,13 @@ export function buildStructure(kind, weapons, colorHex) {
 // Small conventional units, built to the same shape as mechs and structures: `torso` turns
 // to aim (a vehicle's turret, or the whole squad), weapons carry their real models, and the
 // infantry squad's troopers can be hidden one by one as the platoon takes losses.
+const BLOB_GEO = new THREE.CircleGeometry(0.5, 20);
+const BLOB_MAT = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'); const g = x.createRadialGradient(32, 32, 4, 32, 32, 32);
+  g.addColorStop(0, 'rgba(0,0,0,0.45)'); g.addColorStop(1, 'rgba(0,0,0,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  return new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false });
+})();
 const tyreMat = new THREE.MeshStandardMaterial({ color: '#1d1f22', roughness: 0.95 });
 const skinMats = ['#e2b996', '#c68c62', '#8d5a3b', '#5c3a26'].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }));
 export function buildUnit(kind, weapons, colorHex, motion, inf) {
@@ -698,6 +752,8 @@ export function buildUnit(kind, weapons, colorHex, motion, inf) {
   }
   mergeStatic(root);
   for (const wm of Object.values(weaponMounts)) wm.group.traverse((o) => { if (o.isMesh) wm.meshes.push(o); });
-  root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  // troopers are too small to need real shadows: a soft dark patch under the squad will do
+  root.traverse((o) => { if (o.isMesh) { o.castShadow = !inf; o.receiveShadow = !inf; } });
+  if (inf) { const blob = new THREE.Mesh(BLOB_GEO, BLOB_MAT); blob.rotation.x = -Math.PI / 2; blob.position.y = 0.012; blob.userData.keep = true; root.add(blob); }
   return { root, body: root, torso, head: torso, legs: [], arms: [], muzzles, weaponMounts, jets: [], mats, height, scale: 1, wheels: [], treads: [], vk: 0, vOffset: 0, setVehicle() {}, structure: true, troopers };
 }

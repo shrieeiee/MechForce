@@ -24,6 +24,80 @@ export function initAudio() {
   noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  setTimeout(() => prerenderAll(), 300);
+}
+
+// ---- pre-rendered effects
+// Building a sound live takes dozens of oscillators, filters and envelopes — a machine-gun
+// burst alone is about fifty — which phones and big volleys struggle with. So each effect is
+// rendered once, in a few variations and sizes, into a plain sample when audio starts, and
+// played back from that (panned, with a touch of pitch variation). Until a sound is ready
+// it's synthesised live as before.
+const PRE = {}; // key -> [AudioBuffer]
+const VARIANTS = [
+  ['laser', [{ size: 0.8 }, { size: 1.15 }, { size: 1.6 }], 2, 2.0],
+  ['plasma', [{}], 2, 2.4], ['mg', [{}], 3, 2.2], ['flamer', [{}], 2, 2.4],
+  ['cannon', [{ size: 0.8 }, { size: 1.1 }, { size: 1.4 }], 2, 3.0],
+  ['rocket', [{ count: 2 }, { count: 4 }, { count: 6 }], 2, 2.6],
+  ['hit', [{}], 4, 1.8], ['melee', [{}], 3, 2.2], ['jet', [{}], 2, 2.2], ['servo', [{}], 2, 0.8],
+  ['boom', [{ size: 1 }, { size: 1.6 }, { size: 2.4 }], 2, 4.4],
+  ['step', [20, 35, 50, 65, 80, 100, 135].map((tons) => ({ tons })), 3, 1.4],
+];
+function preKey(name, o) {
+  if (name === 'laser') return name + (o.size >= 1.4 ? 2 : o.size >= 1 ? 1 : 0);
+  if (name === 'cannon') return name + (o.size >= 1.25 ? 2 : o.size >= 0.95 ? 1 : 0);
+  if (name === 'rocket') { const c = o.count || 3; return name + (c >= 5 ? 2 : c >= 3 ? 1 : 0); }
+  if (name === 'boom') { const z = o.size || 1; return name + (z >= 2 ? 2 : z >= 1.3 ? 1 : 0); }
+  if (name === 'step') {
+    if (o.gain !== undefined || o.rate !== undefined) return null; // landings and odd steps stay live
+    const t = o.tons ?? 50; const bs = [20, 35, 50, 65, 80, 100, 135];
+    let k = 0; for (let i = 0; i < bs.length; i++) if (Math.abs(bs[i] - t) < Math.abs(bs[k] - t)) k = i;
+    return name + k;
+  }
+  return name;
+}
+let prerendering = false;
+async function prerenderAll() {
+  if (prerendering || typeof OfflineAudioContext === 'undefined') return;
+  prerendering = true;
+  const SR = Math.min(ctx.sampleRate, 44100);
+  for (const [name, sets, n, secs] of VARIANTS) {
+    for (const o of sets) {
+      const key = preKey(name, o);
+      const list = [];
+      for (let v = 0; v < n; v++) {
+        try { list.push(await renderOne(name, o, secs, SR)); } catch { /* keep live synthesis */ }
+        await new Promise((r) => setTimeout(r, 0)); // stay out of the way of the game
+      }
+      if (list.length) PRE[key] = list;
+    }
+  }
+}
+async function renderOne(name, o, secs, SR) {
+  const oc = new OfflineAudioContext(1, Math.ceil(SR * secs), SR);
+  // point the synth at the offline context for the moment it takes to schedule the sound
+  const saved = [ctx, sfxBus, revIn, driveIn];
+  ctx = oc;
+  sfxBus = oc.createGain(); sfxBus.connect(oc.destination);
+  buildFx(sfxBus);
+  try { synth(name, 0.01, o, 0); } finally { [ctx, sfxBus, revIn, driveIn] = saved; }
+  const buf = await oc.startRendering();
+  // trim the silent tail
+  const d = buf.getChannelData(0);
+  let end = d.length - 1;
+  while (end > 0 && Math.abs(d[end]) < 0.0004) end--;
+  const out = new AudioBuffer({ length: Math.max(1, end + 1), numberOfChannels: 1, sampleRate: SR });
+  out.copyToChannel(d.subarray(0, end + 1), 0);
+  return out;
+}
+function playPre(list, t, pan) {
+  const src = ctx.createBufferSource();
+  src.buffer = list[Math.floor(Math.random() * list.length)];
+  src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.06;
+  let last = src;
+  if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, pan)); src.connect(p); last = p; }
+  last.connect(sfxBus);
+  src.start(t);
 }
 export function applyVolumes() {
   if (!ctx) return;
@@ -179,6 +253,14 @@ export function sfx(name, opts = {}) {
     sample(AMIGA_MAP[name], rate * (opts.rate || 1), style === 'both' ? 0.5 : 0.9, opts.delay || 0);
     if (style === 'amiga') return;
   }
+  const key = PRE_ON ? preKey(name, opts) : null;
+  if (key && PRE[key]) { playPre(PRE[key], t, pan); return; }
+  synth(name, t, opts, pan);
+}
+let PRE_ON = true;
+export function setPrerender(on) { PRE_ON = on; }
+
+function synth(name, t, opts, pan) {
   switch (name) {
     case 'laser': laser(t, opts.size || 1, pan); break;
     case 'plasma': {
@@ -438,3 +520,4 @@ export function scoreOffline(mode, seconds) {
   let t = 0.1, s = 0;
   while (t < seconds) { t += mode === 'menu' ? ambientStep(t, s) : battleStep(t, s, mode); s++; }
 }
+export const __preStats = () => { let n = 0, bytes = 0; for (const l of Object.values(PRE)) for (const b of l) { n++; bytes += b.length * 4; } return { keys: Object.keys(PRE).length, n, mb: +(bytes / 1048576).toFixed(1) }; };

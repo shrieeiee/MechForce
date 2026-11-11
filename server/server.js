@@ -69,7 +69,7 @@ export function startServer(opts = {}) {
 
   const makeRoom = (code) => {
     const room = new Room({
-      code, send: sendTo,
+      code, send: sendTo, deltas: true,
       onEmpty: (r) => {
         setTimeout(() => {
           if (![...r.clients.values()].some((c) => c.connected)) { r.dispose(); rooms.delete(r.code); log('room closed', r.code); }

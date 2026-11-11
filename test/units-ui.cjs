@@ -5,6 +5,7 @@ const OUT = process.env.OUT;
   const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const p = await (await b.newContext({ viewport: { width: 1366, height: 820 } })).newPage();
   await p.addInitScript(() => localStorage.setItem('mechforce.settings', JSON.stringify({ quality: 'low', speed: 3 })));
+  if (process.env.DELTAS) await p.addInitScript(() => { window.__DELTAS = true; });
   const errs = []; p.on('pageerror', (e) => errs.push(e.message + e.stack));
   await p.goto('file://' + process.cwd() + '/dist/web/index.html'); await p.waitForTimeout(1500);
   // editor: place troops
@@ -23,7 +24,7 @@ const OUT = process.env.OUT;
   await p.waitForTimeout(900);
   await p.screenshot({ path: `${OUT}/u0-editor.png` });
   // lobby with ground forces on a random map
-  await p.evaluate(() => { const app = window.__mf; app.setScreen('blank', () => {}, null, null); app.startLocal('skirmish'); app.session.send({ t: 'settings', settings: { forces: 'many', mapSize: 'M', seed: 'unitsui' } }); });
+  await p.evaluate(() => { const app = window.__mf; app.setScreen('blank', () => {}, null, null); app.startLocal('skirmish'); if (window.__DELTAS) app.session.room.deltas = true; app.session.send({ t: 'settings', settings: { forces: 'many', mapSize: 'M', seed: 'unitsui' } }); });
   await p.waitForTimeout(800);
   await p.screenshot({ path: `${OUT}/u1-lobby.png` });
   await p.evaluate(() => window.__mf.session.send({ t: 'start' }));
@@ -58,6 +59,7 @@ const OUT = process.env.OUT;
   console.log('unit log lines', ush, 'targeted a unit', shotUnit, 'round', await p.evaluate(() => window.__mf.battle.state.round));
   console.log(await p.evaluate(() => window.__mf.battle.state.log.filter((l) => /platoon|tank|car|scout|carrier|Ground/i.test(l)).slice(-6).join('\n')));
   await p.screenshot({ path: `${OUT}/u6-late.png` });
+  if (process.env.DELTAS) console.log('delta updates applied', await p.evaluate(() => window.__mf.net && window.__mf.net.vseq), 'host view matches', await p.evaluate(() => JSON.stringify(window.__mf.net.state) === JSON.stringify(JSON.parse(JSON.stringify(window.__mf.session.room.game)))));
   console.log('errors', errs.length ? errs : 'none');
   await b.close();
 })();

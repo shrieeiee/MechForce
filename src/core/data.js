@@ -2,7 +2,7 @@ import { MECHS as DISK_MECHS } from './mechdata.js';
 import { EXTRA_MECHS } from './extradata.js';
 
 export const VERSION = '1.13.0';
-export const PROTOCOL = 8;
+export const PROTOCOL = 9;
 
 // Weapon types, in the original program's order.
 // kind: b=ballistic, m=missile, e=energy. n = missiles per volley. snd = sound family

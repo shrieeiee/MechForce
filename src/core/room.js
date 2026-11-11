@@ -7,6 +7,7 @@ import { sanitizePilot } from './pilots.js';
 import { buildTemplate } from './custom.js';
 import { fogView, fogEvents, viewTeams } from './fog.js';
 import { sanitizeMap } from './maps.js';
+import { diff, jclone } from './delta.js';
 
 let nextClient = 1;
 const rid = () => Math.random().toString(36).slice(2, 10);
@@ -55,7 +56,8 @@ export function cleanLance(list, max) {
 }
 
 export class Room {
-  constructor({ code, send, onEmpty, aiDelay = 700, local = false }) {
+  constructor({ code, send, onEmpty, aiDelay = 700, local = false, deltas = false }) {
+    this.deltas = deltas;
     this.code = code || randomCode();
     this.send = send; // (clientId, msg)
     this.onEmpty = onEmpty || (() => {});
@@ -116,7 +118,7 @@ export class Room {
       }
     }
     this.send(c.id, { t: 'welcome', id: c.id, token: c.token, room: this.code, version: VERSION, protocol: PROTOCOL, host: this.hostId === c.id });
-    if (this.game) this.send(c.id, { t: 'start', state: this.viewFor(c.id, this.game) });
+    if (this.game) this.sendStart(c);
     this.pushLobby();
     return c.id;
   }
@@ -153,9 +155,23 @@ export class Room {
     for (const c of this.clients.values()) {
       if (!c.connected) continue;
       const teams = viewTeams(g, c.id);
-      if (g.fog && teams.length === 1) this.send(c.id, { t: 'update', events: fogEvents(g, events, teams), state: fogView(g, teams), seq: g.seq });
-      else this.send(c.id, { t: 'update', events, state: g, seq: g.seq });
+      const fogged = g.fog && teams.length === 1;
+      const view = fogged ? fogView(g, teams) : g;
+      const evs = fogged ? fogEvents(g, events, teams) : events;
+      if (!this.deltas) { this.send(c.id, { t: 'update', events: evs, state: view, seq: g.seq }); continue; }
+      // online: send only what changed since the last state this client was sent
+      const snap = jclone(view);
+      const msg = { t: 'update', events: evs, seq: g.seq, vseq: (c.vseq || 0) + 1 };
+      if (c.lastView && !g.over) { msg.patch = diff(c.lastView, snap) ?? null; msg.base = c.vseq; } else msg.state = snap;
+      c.lastView = snap; c.vseq = msg.vseq;
+      this.send(c.id, msg);
     }
+  }
+  // a client lost track (missed or out-of-order message): next update carries the whole state
+  sendStart(c) {
+    const view = this.viewFor(c.id, this.game);
+    if (this.deltas) { c.lastView = jclone(view); c.vseq = (c.vseq || 0) + 1; }
+    this.send(c.id, { t: 'start', state: view, vseq: c.vseq });
   }
 
   summary() {
@@ -260,7 +276,7 @@ export class Room {
           gid: rid() + rid(),
           sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5, pilots: sl.ctrl === 'ai' ? [] : sl.pilots || [] })),
         });
-        for (const cl of this.clients.values()) if (cl.connected) this.send(cl.id, { t: 'start', state: this.viewFor(cl.id, this.game) });
+        for (const cl of this.clients.values()) if (cl.connected) this.sendStart(cl);
         this.pushLobby();
         return this.scheduleAI();
       }
@@ -298,6 +314,12 @@ export class Room {
       }
       case 'chat': {
         return this.broadcast({ t: 'chat', from: c.name, text: String(msg.text || '').slice(0, 200) });
+      }
+      case 'resync': {
+        if (!this.game) return;
+        const view = this.viewFor(c.id, this.game);
+        c.lastView = jclone(view); c.vseq = (c.vseq || 0) + 1;
+        return this.send(c.id, { t: 'update', events: [], state: view, seq: this.game.seq, vseq: c.vseq });
       }
       case 'ping': return this.send(id, { t: 'pong', at: msg.at });
       default: return;

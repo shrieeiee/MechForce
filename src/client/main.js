@@ -23,6 +23,7 @@ import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mech
 import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
 import { totalArmor, maxArmor, pilotingTN, reactorBlast, SELF_DESTRUCT_TN } from '../core/rules.js';
 import { loadMaps } from './mapstore.js';
+import { patch, jclone } from '../core/delta.js';
 import { showBarracks, abilityTip, skillTip, statusOf } from './barracks.js';
 import { loadRoster, saveRoster, fitPilots, battleDone, markBattle } from './pilotstore.js';
 import { portraitSVG } from './portrait.js';
@@ -258,8 +259,8 @@ class App {
         else if (!msg.lobby.inGame && this.screen !== 'bay' && this.screen !== 'battle') this.showLobby();
         break;
       }
-      case 'start': this.stopAttract(); this.screen = 'battle'; this.closeModal(); this.renderScreen = null; this.screenAction = null; this.battle.start(msg.state); break;
-      case 'update': if (this.screen === 'battle') this.battle.onUpdate(msg); break;
+      case 'start': this.netState(msg); this.stopAttract(); this.screen = 'battle'; this.closeModal(); this.renderScreen = null; this.screenAction = null; this.battle.start(msg.state); break;
+      case 'update': if (this.screen === 'battle' && this.netState(msg)) this.battle.onUpdate(msg); break;
       case 'tolobby': this.closeModal(); this.battle.stop(); this.showLobby(); break;
       case 'error':
         if (msg.fatal) { toast(msg.msg); this.endSession(); this.showTitle(); }
@@ -351,6 +352,18 @@ class App {
   autoJoinHost() {
     this.startAttract();
     this.joinRemote(location.host, new URLSearchParams(location.search).get('room') || '');
+  }
+
+  // Online hosts send each update as a patch to the last state they sent us: keep our own
+  // copy, patch it, and hand the battle a fresh copy. Returns false if we've lost track.
+  netState(msg) {
+    if (msg.vseq === undefined) return true; // local games send whole states
+    if (msg.state) { this.net = { state: jclone(msg.state), vseq: msg.vseq }; return true; }
+    if (!this.net || msg.base !== this.net.vseq) { this.session.send({ t: 'resync' }); return false; }
+    const st = msg.patch ? patch(this.net.state, msg.patch) : this.net.state;
+    this.net = { state: st, vseq: msg.vseq };
+    msg.state = jclone(st);
+    return true;
   }
 
   // ------------------------------------------------------------ attract mode

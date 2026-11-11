@@ -108,7 +108,7 @@ export class PeerHostSession {
     this.conns = new Map(); // clientId -> DataConnection
     this.cfg = cfg || {};
     this.code = randomCode() + randomCode().slice(0, 1);
-    this.room = new Room({ code: this.code, send: (id, msg) => this.route(id, msg), aiDelay: 700 });
+    this.room = new Room({ code: this.code, send: (id, msg) => this.route(id, msg), aiDelay: 700, deltas: true });
     this.selfJoin = true;
     this.myId = this.room.join({ name, platform });
     this.selfJoin = false;
