@@ -241,6 +241,7 @@ export class Room {
         const lance = cleanLance(msg.lance, this.settings.lanceSize);
         if ((msg.lance || []).length && lance.length < Math.min((msg.lance || []).length, this.settings.lanceSize)) this.send(id, { t: 'error', msg: 'A custom design was rejected because it breaks the construction rules.' });
         sl.lance = lance; sl.ready = false;
+        sl.damage = Array.isArray(msg.damage) ? msg.damage.slice(0, lance.length) : null;
         if (msg.name) sl.name = String(msg.name).slice(0, 18);
         return this.pushLobby();
       }
@@ -275,7 +276,7 @@ export class Room {
           seed: this.settings.seed, mission: this.settings.mission, mapSize: this.settings.mapSize, theme: this.settings.theme, fog: !!this.settings.fog,
           customMap: this.settings.customMap || null, defences: this.settings.defences, forces: this.settings.forces, aiLevel: this.settings.aiLevel,
           gid: rid() + rid(),
-          sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5, pilots: sl.ctrl === 'ai' ? [] : sl.pilots || [] })),
+          sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5, pilots: sl.ctrl === 'ai' ? [] : sl.pilots || [], damage: sl.damage || null })),
         });
         for (const cl of this.clients.values()) if (cl.connected) this.sendStart(cl);
         this.pushLobby();

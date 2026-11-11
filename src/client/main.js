@@ -23,6 +23,8 @@ import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mech
 import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
 import { totalArmor, maxArmor, pilotingTN, reactorBlast, SELF_DESTRUCT_TN } from '../core/rules.js';
 import { loadMaps } from './mapstore.js';
+import { showCampaign, loadCompany, saveCompany, campaignDebriefHTML } from './campaign.js';
+import { settle, enemyLance, templateOf } from '../core/campaign.js';
 import { patch, jclone } from '../core/delta.js';
 import { showBarracks, abilityTip, skillTip, statusOf } from './barracks.js';
 import { loadRoster, saveRoster, fitPilots, battleDone, markBattle } from './pilotstore.js';
@@ -256,7 +258,7 @@ class App {
         this.isHost = msg.lobby.host === this.session.myId;
         this.autoPilots();
         if (this.screen === 'lobby') this.renderScreen();
-        else if (!msg.lobby.inGame && this.screen !== 'bay' && this.screen !== 'battle') this.showLobby();
+        else if (!msg.lobby.inGame && this.screen !== 'bay' && this.screen !== 'battle' && !(this.campaignRun && !this.campaignRun.done)) this.showLobby();
         break;
       }
       case 'start': this.netState(msg); this.stopAttract(); this.screen = 'battle'; this.closeModal(); this.renderScreen = null; this.screenAction = null; this.battle.start(msg.state); break;
@@ -389,11 +391,13 @@ class App {
 
   // ------------------------------------------------------------ screens
   showTitle() {
+    this.campaignRun = null;
     this.endSession();
     this.startAttract();
     music('menu');
     const items = [
       { k: 'skirmish', label: 'Skirmish', hint: 'You vs the computer', fn: () => this.startLocal('skirmish') },
+      { k: 'campaign', label: 'Campaign', hint: 'Run a mercenary company', fn: () => showCampaign(this, { onExit: () => this.showTitle() }) },
       { k: 'hostp2p', label: 'Host Online', hint: 'Friends join with a code', fn: () => this.hostOnline() },
       canHost ? { k: 'host', label: 'Host LAN Server', hint: 'This PC hosts your network', fn: () => this.hostLan() } : null,
       { k: 'join', label: 'Join Game', hint: 'Find a host or enter an address', fn: () => this.showJoin() },
@@ -622,6 +626,34 @@ class App {
     };
     const cycle = (k, d) => { const o = opts(k); picks[k] = o[(o.indexOf(picks[k]) + d + o.length) % o.length]; sfx('ui-move'); render(); };
     render();
+  }
+
+  // ---- campaign battles: a local game set up from a contract, settled afterwards
+  showBarracksFrom(back) { showBarracks(this, { onExit: back }); }
+  startCampaignBattle(co, c, crew) {
+    this.startLocal('campaign', { mission: c.mission, mapSize: c.mapSize, theme: c.theme, aiLevel: c.aiLevel, forces: c.forces, defences: c.defences, fog: c.fog, seed: c.seed, lanceSize: 4, sides: 2 });
+    this.campaignRun = { c, coSeed: co.seed, deployed: crew.map((x, i) => ({ uid: x.mech.uid, mechId: i })), done: false };
+    this.pilotPicks = { 0: crew.map((x) => x.pilot.id) };
+    const sess = this.session;
+    // after startLocal's own starter lance, which this replaces
+    queueMicrotask(() => queueMicrotask(() => {
+      if (this.session !== sess) return;
+      const tplOf = (m) => templateOf(m.design);
+      sess.send({ t: 'lance', side: 0, lance: crew.map((x) => x.mech.design), damage: crew.map((x) => ({ armor: x.mech.armor || tplOf(x.mech).a, internal: x.mech.internal || tplOf(x.mech).i })), name: co.name });
+      this.sendPilots(0);
+      sess.send({ t: 'lance', side: 1, lance: enemyLance(c), name: c.employer === 'Rebel militia' ? 'Government forces' : 'Opposing force' });
+      sess.send({ t: 'start' });
+    }));
+  }
+  settleCampaign(st) {
+    const run = this.campaignRun;
+    if (!run || run.done || !st.over) return null;
+    const co = loadCompany();
+    if (!co || co.seed !== run.coSeed) return null;
+    run.done = true;
+    const res = settle(co, run.c, st, 0, run.deployed);
+    saveCompany(co);
+    return { co, res };
   }
 
   // After a battle: experience, wounds and deaths for this device's pilots
@@ -967,7 +999,9 @@ class App {
       return `<tr class="${teamOfS(i) === wTeam ? 'won' : ''}"><td style="color:${s.color};font-weight:700">${esc(s.name)}${st.teams && st.teams.some((t) => t.members.length > 1) ? ` <span class="faint">· Team ${teamOfS(i) + 1}</span>` : ''}</td><td class="num">${alive}/${ms.length}</td><td class="num">${dmg}</td><td class="num">${kills}</td><td class="num">${acc}%</td></tr>`;
     }).join('');
     const mvp = st.mechs.slice().sort((a, b) => b.stats.dmg + b.stats.kills * 30 - (a.stats.dmg + a.stats.kills * 30))[0];
-    const deb = this.recordPilots(st);
+    // the results can be shown more than once (late updates, View battlefield): settle once
+    if (!this.resultsOf || this.resultsOf.gid !== st.gid) this.resultsOf = { gid: st.gid, deb: this.recordPilots(st), camp: this.settleCampaign(st) };
+    const { deb, camp } = this.resultsOf;
     const debrief = deb ? `<div class="eyebrow">MechWarriors</div><div class="debrief">${deb.map((d) => `<div class="db-row">${portraitSVG(d.p.portrait, { size: 40, dead: d.fate === 'killed', color: st.sides[d.m.side].color })}
       <div class="grow"><b>${esc(d.p.callsign)}</b> <span class="faint">${esc(d.m.design)}</span><div class="sm ${d.fate === 'killed' ? 'bad-t' : d.fate === 'ok' ? 'ok-t' : 'warn'}">${d.fate === 'killed' ? 'Killed in action' : d.fate === 'ejected' ? 'Ejected' + (d.rest ? ` · recovering for ${d.rest} battle${d.rest > 1 ? 's' : ''}` : '') : d.fate === 'wounded' ? `Wounded · recovering for ${d.rest} battle${d.rest > 1 ? 's' : ''}` : 'Unhurt'}</div></div>
       <div class="num xp" ${tipAttr('Experience', d.xp.parts.map(([k, v]) => `<div>${esc(k)}: +${v}</div>`).join(''))}>+${d.xp.total} XP</div></div>`).join('')}</div>` : '';
@@ -976,12 +1010,15 @@ class App {
       <div class="eyebrow">${esc(MISSIONS.find((m) => m.id === st.mission).name)} · ${st.round} rounds · T+${(st.round - 1) * 50}s</div>
       <h2 style="font-size:40px">${esc(title)}</h2><p class="brief">${esc(w ? w.reason : '')}</p>
       <div style="overflow-x:auto"><table class="results-table"><tr><th>Force</th><th>Mechs left</th><th>Damage dealt</th><th>Kills</th><th>Accuracy</th></tr>${rows}</table></div>
+      ${camp ? campaignDebriefHTML(camp.co, camp.res) : ''}
       ${debrief}
       ${mvp ? `<div class="dim">Top performer: <b style="color:var(--ink)">${esc(mvp.design)}</b> (${esc(mvp.pilot.name)}) — ${mvp.stats.dmg} damage, ${mvp.stats.kills} kill${mvp.stats.kills === 1 ? '' : 's'}</div>` : ''}
-      <div class="stack">${canRematch ? '<div class="btn primary nav" data-key="again">Back to lobby</div>' : '<div class="faint">Waiting for the host…</div>'}
+      <div class="stack">${this.campaignRun ? '<div class="btn primary nav" data-key="company">Back to the company</div>' : canRematch ? '<div class="btn primary nav" data-key="again">Back to lobby</div>' : '<div class="faint">Waiting for the host…</div>'}
       ${deb ? '<div class="btn nav" data-key="barracks">Barracks — spend experience</div>' : ''}
       <div class="btn nav" data-key="field">View battlefield</div>
       <div class="btn nav" data-key="quit">Quit to title</div></div></div>`);
+    const coBtn = $('[data-key=company]', el);
+    if (coBtn) coBtn.addEventListener('click', () => { this.closeModal(); this.endSession(); this.campaignRun = null; showCampaign(this, { onExit: () => this.showTitle(), tab: 'hangar' }); });
     const again = $('[data-key=again]', el);
     if (again) again.addEventListener('click', () => { this.closeModal(); this.session.send({ t: 'lobby' }); });
     $('[data-key=field]', el).addEventListener('click', () => { this.closeModal(); });

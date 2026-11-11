@@ -81,6 +81,12 @@ export function createGame(setup) {
       const f = team === 0 ? 0 : team === 1 ? 3 : team === 2 ? 5 : 1;
       const mech = makeMech(st.mechs.length, s, tpl, pilot, pos.x, pos.y, f, st.sides[s]);
       mech.team = team;
+      // campaign mechs arrive with the damage they took last time (never more than full)
+      const dmg = sd.damage && sd.damage[i];
+      if (dmg && Array.isArray(dmg.armor) && Array.isArray(dmg.internal)) {
+        mech.armor = mech.armor.map((v, l) => Math.max(0, Math.min(v, Math.round(Number(dmg.armor[l]) || 0))));
+        mech.internal = mech.internal.map((v, l) => Math.max(1, Math.min(v, Math.round(Number(dmg.internal[l]) || 1))));
+      }
       st.mechs.push(mech);
     });
   }
@@ -1352,7 +1358,8 @@ function checkVictory(st, ev) {
   if (nAlive <= 1) {
     const s = alive.indexOf(true);
     if (s < 0) return setWinner(st, ev, -1, 'Mutual destruction.');
-    return setWinner(st, ev, s, 'All enemy mechs neutralized.');
+    const quit = st.teams.some((t, i) => i !== s && t.members.length && t.members.every((m) => st.sides[m].conceded || !st.mechs.some((x) => x.side === m && operational(x))) && t.members.some((m) => st.sides[m].conceded));
+    return setWinner(st, ev, s, quit ? 'The enemy withdrew from the field.' : 'All enemy mechs neutralized.');
   }
 }
 
