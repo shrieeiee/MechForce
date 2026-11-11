@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { center, DIR_ANGLE, toAxial, fromAxial, neighbor } from '../core/hex.js';
 import { WEAPONS, TERRAIN, UNITS } from '../core/data.js';
 import { totalArmor, maxArmor, operational } from '../core/rules.js';
-import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims, rollTracks, buildStructure, buildUnit } from './models.js';
+import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims, rollTracks, buildStructure, buildUnit, skinMerge, BAKED_MAT } from './models.js';
 import { sfx } from './audio.js';
 import { input } from './input.js';
 
@@ -88,7 +88,8 @@ export class Renderer {
     // the sun covers the whole map and never moves, so the shadow map only needs redrawing
     // when something moves: every frame while animating, a few times a second otherwise
     this.gl.shadowMap.autoUpdate = false; this.gl.shadowMap.needsUpdate = true;
-    this.shadowEvery = q === 'high' ? [1, 4] : [2, 8];
+    // idle refresh is only for slow things like turning turrets; busy = something is moving
+    this.shadowEvery = q === 'high' ? [1, 20] : [2, 30];
     if (this.terrainGroup) this.terrainGroup.traverse((o) => { if (o.userData.tree) o.castShadow = q === 'high'; });
     this.sun.castShadow = q !== 'low';
     this.sun.shadow.mapSize.set(q === 'high' ? 2048 : 1024, q === 'high' ? 2048 : 1024);
@@ -316,6 +317,7 @@ export class Renderer {
       if (!v) {
         const color = state.sides[m.side].color;
         const model = buildMech({ design: m.design, tons: m.tons, cls: m.cls, weapons: m.weapons, jump: m.jumpBase, body: m.body, mot: m.mot }, color);
+        skinMerge(model.root);
         const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.74, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false }));
         ring.rotation.x = -Math.PI / 2; ring.rotation.z = Math.PI / 6;
         model.root.add(ring);
@@ -361,6 +363,7 @@ export class Renderer {
       if (!sv) {
         const color = s.team >= 0 && state.teams && state.teams[s.team] ? state.teams[s.team].color : '#9aa3ad';
         const model = buildStructure(s.kind, s.weapons || [], color);
+        skinMerge(model.root);
         sv = { id: 's' + s.id, sid: s.id, model, state: s, wantYaw: 0, free: true, color };
         model.torso.rotation.y = 0;
         this.structGroup.add(model.root);
@@ -387,6 +390,7 @@ export class Renderer {
       if (!uv) {
         const color = u.team >= 0 && state.teams && state.teams[u.team] ? state.teams[u.team].color : '#b3a37a';
         const model = buildUnit(u.kind, u.weapons || [], color, u.motion, u.inf);
+        if (!u.inf) skinMerge(model.root);
         uv = { id: 'u' + u.id, uid: u.id, model, state: u, wantYaw: 0, free: true, color, unit: true };
         this.unitGroup.add(model.root);
         this.units.set(u.id, uv);
@@ -502,7 +506,13 @@ export class Renderer {
     const dead = m.dead;
     if (dead && !v.dead) {
       v.dead = true;
-      mdl.root.traverse((o) => { if (o.isMesh && o.material && o.material.color) { o.material = o.material.clone(); o.material.color.multiplyScalar(0.25); if (o.material.emissive) o.material.emissiveIntensity = 0; } });
+      mdl.root.traverse((o) => {
+        if (!o.isMesh || !o.material || !o.material.color) return;
+        const src = o.material;
+        o.material = src.clone(); o.material.color.multiplyScalar(0.25); if (o.material.emissive) o.material.emissiveIntensity = 0;
+        // the baked material's shader hooks don't survive clone()
+        if (src === BAKED_MAT) { o.material.onBeforeCompile = src.onBeforeCompile; o.material.customProgramCacheKey = () => 'baked-v1-wreck'; }
+      });
       mdl.body.rotation.x = 0.5; mdl.body.rotation.z = 0.35; mdl.body.position.y = -mdl.height * 0.3;
       v.ring.visible = false;
     }
@@ -513,7 +523,8 @@ export class Renderer {
       if (!v.animating && !proneNow && (m.vmode === 'vehicle') !== (mdl.vk > 0.5)) mdl.setVehicle(m.vmode === 'vehicle' ? 1 : 0);
       mdl.mats.glass.emissiveIntensity = m.shutdown || m.pilot.ko ? 0.05 : 1.1;
       // limbs blown off
-      mdl.arms.forEach((a) => { a.sh.visible = !m.locGone[a.loc]; });
+      // (parts are skinned into one mesh, so a lost arm is hidden by shrinking its bone)
+      mdl.arms.forEach((a) => { a.sh.visible = !m.locGone[a.loc]; if (m.locGone[a.loc]) a.sh.scale.setScalar(0.0001); });
       mdl.legs.forEach((l) => { l.hip.scale.y = m.locGone[l.loc] ? 0.35 : 1; });
     }
     v.damaged = !dead && totalArmor(m) / maxArmor(m) < 0.5;

@@ -23,6 +23,7 @@ import { MECHS, WEAPONS, MISSIONS, THEMES, MAP_SIZES, CLASS_NAMES, VERSION, mech
 import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
 import { totalArmor, maxArmor, pilotingTN, reactorBlast, SELF_DESTRUCT_TN } from '../core/rules.js';
 import { loadMaps } from './mapstore.js';
+import { loadResume, saveResume, clearResume } from './resumestore.js';
 import { showCampaign, loadCompany, saveCompany, campaignDebriefHTML } from './campaign.js';
 import { settle, enemyLance, templateOf } from '../core/campaign.js';
 import { patch, jclone } from '../core/delta.js';
@@ -262,7 +263,7 @@ class App {
         break;
       }
       case 'start': this.netState(msg); this.stopAttract(); this.screen = 'battle'; this.closeModal(); this.renderScreen = null; this.screenAction = null; this.battle.start(msg.state); break;
-      case 'update': if (this.screen === 'battle' && this.netState(msg)) this.battle.onUpdate(msg); break;
+      case 'update': if (this.screen === 'battle' && this.netState(msg)) { this.battle.onUpdate(msg); this.autosave(msg.state); } break;
       case 'tolobby': this.closeModal(); this.battle.stop(); this.showLobby(); break;
       case 'error':
         if (msg.fatal) { toast(msg.msg); this.endSession(); this.showTitle(); }
@@ -395,7 +396,9 @@ class App {
     this.endSession();
     this.startAttract();
     music('menu');
+    const saved = loadResume();
     const items = [
+      ...(saved ? [{ k: 'resume', label: 'Resume battle', hint: saved.title + ' · ' + new Date(saved.at).toLocaleDateString(), fn: () => this.resumeLocal() }] : []),
       { k: 'skirmish', label: 'Skirmish', hint: 'You vs the computer', fn: () => this.startLocal('skirmish') },
       { k: 'campaign', label: 'Campaign', hint: 'Run a mercenary company', fn: () => showCampaign(this, { onExit: () => this.showTitle() }) },
       { k: 'hostp2p', label: 'Host Online', hint: 'Friends join with a code', fn: () => this.hostOnline() },
@@ -628,10 +631,32 @@ class App {
     render();
   }
 
+  // ---- save and resume: local battles are saved after every move, and can be picked up
+  // again from the title screen after closing the game
+  autosave(st) {
+    if (!this.session || !this.session.local || !this.session.room) return;
+    if (st && st.over) { clearResume(); return; }
+    const snap = this.session.room.snapshot();
+    if (!snap) return;
+    saveResume({ at: Date.now(), kind: this.localKind, room: snap, campaignRun: this.campaignRun || null, pilotPicks: this.pilotPicks || {},
+      title: `${MISSIONS.find((m) => m.id === snap.game.mission).name} · round ${snap.game.round}` });
+  }
+  resumeLocal() {
+    const save = loadResume();
+    if (!save) { toast('There is no battle to resume'); return; }
+    this.endSession();
+    const sess = new LocalSession(this.settings.name, platformName());
+    this.attachSession(sess);
+    this.localKind = save.kind;
+    this.campaignRun = save.campaignRun;
+    this.pilotPicks = save.pilotPicks;
+    try { sess.room.restore(save.room, sess.myId); } catch (e) { console.error(e); clearResume(); toast('That saved battle couldn\'t be loaded'); this.showTitle(); }
+  }
+
   // ---- campaign battles: a local game set up from a contract, settled afterwards
   showBarracksFrom(back) { showBarracks(this, { onExit: back }); }
   startCampaignBattle(co, c, crew) {
-    this.startLocal('campaign', { mission: c.mission, mapSize: c.mapSize, theme: c.theme, aiLevel: c.aiLevel, forces: c.forces, defences: c.defences, fog: c.fog, seed: c.seed, lanceSize: 4, sides: 2 });
+    this.startLocal('campaign', { tonnage: 800, mission: c.mission, mapSize: c.mapSize, theme: c.theme, aiLevel: c.aiLevel, forces: c.forces, defences: c.defences, fog: c.fog, seed: c.seed, lanceSize: 4, sides: 2 });
     this.campaignRun = { c, coSeed: co.seed, deployed: crew.map((x, i) => ({ uid: x.mech.uid, mechId: i })), done: false };
     this.pilotPicks = { 0: crew.map((x) => x.pilot.id) };
     const sess = this.session;

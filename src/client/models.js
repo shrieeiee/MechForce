@@ -757,3 +757,42 @@ export function buildUnit(kind, weapons, colorHex, motion, inf) {
   if (inf) { const blob = new THREE.Mesh(BLOB_GEO, BLOB_MAT); blob.rotation.x = -Math.PI / 2; blob.position.y = 0.012; blob.userData.keep = true; root.add(blob); }
   return { root, body: root, torso, head: torso, legs: [], arms: [], muzzles, weaponMounts, jets: [], mats, height, scale: 1, wheels: [], treads: [], vk: 0, vOffset: 0, setVehicle() {}, structure: true, troopers };
 }
+
+// --------------------------------------------------------------------------- draw-call merging
+// After mergeStatic a mech is still ~30 baked meshes, one per moving part (thigh, shin, arm,
+// weapon...). Rigid skinning folds them into ONE mesh: each vertex is bound to its part's
+// group with weight 1, so the parts keep animating exactly as before while the whole mech
+// draws in a single call (and a single call in the shadow pass).
+export function skinMerge(root) {
+  root.updateMatrixWorld(true);
+  const parts = [];
+  root.traverse((o) => { if (o.isMesh && !o.isInstancedMesh && !o.isSkinnedMesh && o.material === BAKED_MAT && !o.userData.keep) parts.push(o); });
+  if (parts.length < 2) return 0;
+  const bones = [], boneIdx = new Map();
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const geos = [];
+  for (const m of parts) {
+    const bone = m.parent;
+    if (!boneIdx.has(bone)) { boneIdx.set(bone, bones.length); bones.push(bone); }
+    const g = m.geometry.clone();
+    // into root space at bind time
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+    const n = g.attributes.position.count, bi = boneIdx.get(bone);
+    const si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) { si[i * 4] = bi; sw[i * 4] = 1; }
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+    g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+    geos.push(g);
+  }
+  const merged = mergeGeometries(geos, false);
+  if (!merged) return 0;
+  for (const m of parts) m.parent.remove(m);
+  const sk = new THREE.SkinnedMesh(merged, BAKED_MAT);
+  sk.castShadow = true; sk.receiveShadow = true;
+  sk.frustumCulled = false; // the bones move it; culling would use the bind pose
+  root.add(sk);
+  sk.updateMatrixWorld(true);
+  // bone inverses from the bones' world matrices now (the same pose the vertices are in)
+  sk.bind(new THREE.Skeleton(bones), sk.matrixWorld);
+  return parts.length;
+}

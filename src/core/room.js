@@ -355,6 +355,23 @@ export class Room {
     this.scheduleAI(r.events);
   }
 
+  // ---- save and resume (local games): the lobby and the battle in progress
+  snapshot() {
+    if (!this.game || this.game.over) return null;
+    return { settings: this.settings, slots: this.slots, game: this.game, hostId: this.hostId };
+  }
+  restore(snap, id) {
+    const swap = (ctrl) => (ctrl === snap.hostId ? id : ctrl);
+    this.settings = { ...this.settings, ...snap.settings };
+    this.slots = snap.slots.map((sl) => ({ ...sl, ctrl: swap(sl.ctrl) }));
+    this.game = snap.game;
+    for (const sd of this.game.sides) sd.ctrl = swap(sd.ctrl);
+    const c = this.clients.get(id);
+    if (c) this.sendStart(c);
+    this.pushLobby();
+    this.scheduleAI();
+  }
+
   dispose() { clearTimeout(this.aiTimer); }
 }
 
