@@ -1261,7 +1261,11 @@ export class Renderer {
           v.model.legs.forEach((l) => { const g = sw * l.gait; l.hip.rotation.x = g; l.knee.rotation.x = l.rest + Math.max(0, -g) * 0.8; });
         });
         if (tracked) sfx('servo', { gain: 0.35, pan: this.panOf(pb) });
-        else sfx('step', { tons: v.state.tons, pan: this.panOf(pb) });
+        else {
+          // footsteps of mechs off the screen: full, quieter or muted (Settings > sound)
+          const on = this.offSteps === 'on' || this.onScreenPos(pb, 0);
+          if (on || this.offSteps !== 'off') sfx('step', { tons: v.state.tons, pan: this.panOf(pb), vol: on ? 1 : 0.35 });
+        }
       }
       if (!tracked) v.model.legs.forEach((l) => { l.hip.rotation.x = 0; l.knee.rotation.x = l.rest; });
     }

@@ -3,7 +3,12 @@ import { AMIGA_SAMPLES } from './samples.js';
 
 let ctx = null, master = null, sfxBus = null, musicBus = null;
 const buffers = {};
-export const audioSettings = { sfx: 0.8, music: 0.4, style: 'modern' }; // modern | amiga | both
+export const audioSettings = { sfx: 0.8, music: 0.4, style: 'modern', mix: {} }; // modern | amiga | both
+// The mixer: each effect belongs to a group with its own volume (Settings > Sound mixer)
+export const SFX_GROUPS = { steps: 'Footsteps & engines', weapons: 'Weapons', impacts: 'Hits & explosions', ui: 'Menu & alerts' };
+const groupOf = (name) => (name === 'step' || name === 'servo' || name === 'jet' ? 'steps' : name === 'hit' || name === 'boom' || name === 'melee' ? 'impacts'
+  : name.startsWith('ui-') || name === 'turn' || name === 'win' || name === 'lose' || name === 'alarm' ? 'ui' : 'weapons');
+let curVol = 1; // the playing effect's group volume, applied to every voice it builds
 
 export function initAudio() {
   if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
@@ -95,6 +100,7 @@ function playPre(list, t, pan) {
   src.buffer = list[Math.floor(Math.random() * list.length)];
   src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.06;
   let last = src;
+  if (curVol !== 1) { const g = ctx.createGain(); g.gain.value = curVol; src.connect(g); last = g; }
   if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, pan)); src.connect(p); last = p; }
   last.connect(sfxBus);
   src.start(t);
@@ -131,7 +137,7 @@ function buildFx(out) {
 
 function env(g, t, a, peak, d) {
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + a);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak * curVol), t + a);
   g.gain.exponentialRampToValueAtTime(0.0001, t + a + d);
 }
 // route a voice: panned, dry to the bus (or through the drive), plus a reverb send
@@ -139,6 +145,8 @@ function route(node, t, o) {
   const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
   let last = node;
   if (p) { p.pan.value = Math.max(-1, Math.min(1, o.pan || 0)); node.connect(p); last = p; }
+  // the drive stage squashes level differences, so turned-down groups go in even quieter
+  if (o.drive && driveIn && curVol < 1) { const q = ctx.createGain(); q.gain.value = curVol; last.connect(q); last = q; }
   last.connect(o.drive && driveIn ? driveIn : sfxBus);
   if (o.rev && revIn) { const s = ctx.createGain(); s.gain.value = o.rev; last.connect(s); s.connect(revIn); }
 }
@@ -181,7 +189,7 @@ function sample(name, rate = 1, gain = 0.8, delay = 0) {
   const b = buffers[name];
   if (!b) return false;
   const s = ctx.createBufferSource(); s.buffer = b; s.playbackRate.value = rate;
-  const g = ctx.createGain(); g.gain.value = gain;
+  const g = ctx.createGain(); g.gain.value = gain * curVol;
   s.connect(g); g.connect(sfxBus); s.start(now() + delay);
   return true;
 }
@@ -245,6 +253,13 @@ function rockets(t, count, pan) {
 export function sfx(name, opts = {}) {
   if (!ctx || audioSettings.sfx <= 0) return;
   if (audioSettings.attract && !name.startsWith('ui-')) return;
+  const gv = (audioSettings.mix && audioSettings.mix[groupOf(name)]) ?? 1;
+  const vol = gv * (opts.vol ?? 1);
+  if (vol <= 0.001) return;
+  curVol = vol;
+  try { playSfx(name, opts); } finally { curVol = 1; }
+}
+function playSfx(name, opts) {
   const t = now() + (opts.delay || 0);
   const pan = opts.pan || 0;
   const style = audioSettings.style;

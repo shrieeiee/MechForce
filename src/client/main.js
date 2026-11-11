@@ -49,7 +49,7 @@ style.textContent = `
 ` + css;
 document.head.appendChild(style);
 
-const DEFAULTS = { name: '', quality: isCapacitor ? 'medium' : 'high', speed: 1, camSpeed: 1, sfx: 0.8, music: 0.4, sound: 'modern', glyphs: 'auto', tips: true, turn: '', signal: '', lastServer: '', lastRoom: '', tonnage: 200, colorblind: false, textScale: 1, keys: {} };
+const DEFAULTS = { name: '', quality: isCapacitor ? 'medium' : 'high', speed: 1, camSpeed: 1, sfx: 0.8, music: 0.4, sound: 'modern', glyphs: 'auto', tips: true, turn: '', signal: '', lastServer: '', lastRoom: '', tonnage: 200, colorblind: false, textScale: 1, keys: {}, mixSteps: 1, mixWeapons: 1, mixImpacts: 1, mixUi: 1, offSteps: 'quiet' };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('mechforce.settings') || '{}') }; } catch { return { ...DEFAULTS }; }
 }
@@ -99,6 +99,8 @@ class App {
     this.renderer.speed = s.speed;
     this.renderer.camSpeed = s.camSpeed;
     audioSettings.sfx = s.sfx; audioSettings.music = s.music; audioSettings.style = s.sound;
+    audioSettings.mix = { steps: s.mixSteps ?? 1, weapons: s.mixWeapons ?? 1, impacts: s.mixImpacts ?? 1, ui: s.mixUi ?? 1 };
+    this.renderer.offSteps = s.offSteps || 'quiet';
     input.forcedGlyphs = s.glyphs;
     tipSettings.on = s.tips !== false;
     document.documentElement.dataset.device = s.glyphs !== 'auto' ? s.glyphs : input.device;
@@ -927,6 +929,11 @@ class App {
       { k: 'camSpeed', label: 'Camera speed', opts: [0.5, 0.75, 1, 1.5, 2], fmt: (v) => v + '×' },
       { k: 'sfx', label: 'Sound effects', opts: [0, 0.2, 0.4, 0.6, 0.8, 1], fmt: (v) => Math.round(v * 10) + '/10' },
       { k: 'music', label: 'Music', opts: [0, 0.2, 0.4, 0.6, 0.8, 1], fmt: (v) => Math.round(v * 10) + '/10' },
+      { k: 'mixSteps', label: '— Footsteps & engines', opts: [0, 0.25, 0.5, 0.75, 1, 1.25], fmt: (v) => (v ? Math.round(v * 100) + '%' : 'Off') },
+      { k: 'mixWeapons', label: '— Weapons', opts: [0, 0.25, 0.5, 0.75, 1, 1.25], fmt: (v) => (v ? Math.round(v * 100) + '%' : 'Off') },
+      { k: 'mixImpacts', label: '— Hits & explosions', opts: [0, 0.25, 0.5, 0.75, 1, 1.25], fmt: (v) => (v ? Math.round(v * 100) + '%' : 'Off') },
+      { k: 'mixUi', label: '— Menu & alerts', opts: [0, 0.25, 0.5, 0.75, 1, 1.25], fmt: (v) => (v ? Math.round(v * 100) + '%' : 'Off') },
+      { k: 'offSteps', label: '— Off-screen footsteps', opts: ['on', 'quiet', 'off'], fmt: (v) => ({ on: 'Full volume', quiet: 'Quieter', off: 'Muted' }[v]) },
       { k: 'sound', label: 'Weapon sounds', opts: ['modern', 'amiga', 'both'], fmt: (v) => ({ modern: 'Modern', amiga: 'Original Amiga', both: 'Both' }[v]) },
       { k: 'tips', label: 'Tooltips & hints', opts: [true, false], fmt: (v) => (v ? 'On' : 'Off') },
       { k: 'colorblind', label: 'Colour-blind mode', opts: [false, true], fmt: (v) => (v ? 'On — distinct colours and shapes' : 'Off') },
