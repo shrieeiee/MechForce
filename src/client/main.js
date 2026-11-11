@@ -475,6 +475,13 @@ class App {
         tip: '<p>Fortify each side\'s deployment edge. <b>Light</b>: two gun emplacements per side. <b>Heavy</b>: a bunker and three emplacements. They fire on their own at the end of every round, and can be shot down.</p>' });
     defs.push({ k: 'aiLevel', label: 'Computer skill', value: AI_LEVELS[L.settings.aiLevel || 'normal'].name, opts: AI_LEVEL_IDS,
       tip: '<p>How well computer-controlled mechs fight. <b>Easy</b>: green pilots (gunnery 5, piloting 6) who make mistakes. <b>Normal</b>: regulars (4/5). <b>Hard</b>: veterans (3/4) who focus fire and press harder. <b>Veteran</b>: elites (2/3), relentless.</p>' });
+    {
+      const misR = MISSIONS.find((x) => x.id === L.settings.mission);
+      const rl = L.settings.roundLimit || 'standard';
+      defs.push(misR && misR.id === 'hold' ? { k: 'roundLimitFixed', label: 'Round limit', value: `${misR.rounds} rounds (the objective)`, opts: [], fixed: true }
+        : { k: 'roundLimit', label: 'Round limit', value: rl === 'none' ? 'None' : `${rl === 'long' ? Math.round(misR.rounds * 1.5) : misR.rounds} rounds${rl === 'long' ? ' (long)' : ''}`, opts: ['standard', 'long', 'none'],
+          tip: '<p>How long the battle can run. <b>Standard</b> is the mission\'s own limit; <b>Long</b> gives half as many rounds again; <b>None</b> fights until one side is beaten or completes its objective. When a limit runs out, the side with the most strength left wins.</p><p>Hold Position is won by holding out, so its limit is fixed.</p>' });
+    }
     defs.push({ k: 'forces', label: 'Ground forces', value: { none: 'None', few: 'Few', many: 'Many' }[L.settings.forces || 'none'], opts: ['none', 'few', 'many'],
       tip: '<p>Infantry platoons and combat vehicles, run by the computer. Each side gets support near its edge, and local militia guard the middle of the map, firing on any mech that comes close. <b>Few</b>: one per side and two local units. <b>Many</b>: twice that.</p><p>They move and shoot at the end of every round. Machine guns and flamers are the answer to infantry.</p>' });
     if (cm) defs.push({ k: 'mapinfo', label: 'Battlefield', value: `${MAP_SIZES.find((s) => s.id === cm.size).name} · ${THEMES.find((t) => t.id === cm.theme).name}`, opts: [], fixed: true });

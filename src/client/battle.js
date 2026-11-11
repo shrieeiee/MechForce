@@ -1,7 +1,7 @@
 import { computeReach, canEndAt, pathFrom, reachKey, toHit, availableMechs, operational, canAct, activeSide, missionOf,
   dissipation, expectedDamage, totalArmor, maxArmor, secondsElapsed, attackDirection,
   moveModes, availMP, canConvert, conversionCost, pilotingMods, isQuadVee, onTracks, MOVE_HEAT,
-  toHitStructure, structureAt, envHeat, envHeatParts, isBurning, smokeAt, dfaDamage, dfaSelfDamage, toHitUnit, unitAt, unitStrength } from '../core/rules.js';
+  toHitStructure, structureAt, envHeat, envHeatParts, isBurning, smokeAt, dfaDamage, dfaSelfDamage, maxRounds, toHitUnit, unitAt, unitStrength } from '../core/rules.js';
 import { WEAPONS, MISSIONS, CLASS_NAMES, TERRAIN, critName, STRUCTS, LOADOUTS, CLIMATE, TEAM_ZONE_NAMES, UNITS, MOTION_NAMES } from '../core/data.js';
 import { neighbor, distance, facingToward, relBearing } from '../core/hex.js';
 import { fogView, fogEvents } from '../core/fog.js';
@@ -599,10 +599,10 @@ export class Battle {
     const side = activeSide(st);
     const mine = this.mySides();
     const goalSide = mine.length ? (this.isMine(side) ? side : mine[0]) : -1;
-    const limit = MISSIONS.find((x) => x.id === st.mission).rounds;
+    const limit = maxRounds(st);
     const itemTxt = st.item && !st.item.gone ? `${esc(st.item.name)}: ${st.item.carrier !== null ? 'carried by ' + esc(st.mechs[st.item.carrier].design) : 'on the ground'}` : '';
     const top = html(`<div class="hud-top">
-      <div class="mission-card panel" ${attr('Your objective', `<p>${esc(goalSide >= 0 ? st.sides[goalSide].goal : 'You are watching this battle.')}</p><p>Time limit: ${limit} rounds (${limit * 50} seconds). ${esc(mis.name)} briefings come from the original 1989 game.</p>`)}>
+      <div class="mission-card panel" ${attr('Your objective', `<p>${esc(goalSide >= 0 ? st.sides[goalSide].goal : 'You are watching this battle.')}</p><p>${limit ? `Time limit: ${limit} rounds (${limit * 50} seconds).` : 'No time limit: fight to the finish.'} ${esc(mis.name)} briefings come from the original 1989 game.</p>`)}>
         <div class="eyebrow">${ICON.flag} ${esc(mis.name)}</div>
         <div class="goal">${esc(goalSide >= 0 ? st.sides[goalSide].goal : 'Spectating')}</div>
         ${itemTxt ? `<div class="clock">${itemTxt}</div>` : ''}</div>
@@ -680,7 +680,7 @@ export class Battle {
         <span class="tr-die">${ICON.dice}${s.init}</span><span class="tr-pips">${pips}</span></div>`;
     }).join('');
     return `<div class="tracker panel" ${attr('Turn order', turnOrderTip(st))}>
-      <div class="tr-head"><span>${ICON.turn} Round ${st.round}<span class="faint">/${limit}</span></span><span>${ICON.clock} T+${secondsElapsed(st)}s</span></div>
+      <div class="tr-head"><span>${ICON.turn} Round ${st.round}<span class="faint">${limit ? '/' + limit : ''}</span></span><span>${ICON.clock} T+${secondsElapsed(st)}s</span></div>
       <div class="tr-sides">${chips}</div>
       <div class="tr-status">${this.statusText()}</div></div>`;
   }
@@ -998,7 +998,7 @@ export class Battle {
       <p class="brief" style="font-style:italic">“${esc(side.brief)}”</p>
       <div class="stat-grid">
         <div class="stat"><div class="k">Objective</div><div style="font-size:15px">${esc(side.goal)}</div></div>
-        <div class="stat"><div class="k">Time limit</div><div class="v">${mis.rounds} rounds</div></div>
+        <div class="stat"><div class="k">Time limit</div><div class="v">${maxRounds(st) ? maxRounds(st) + ' rounds' : 'None'}</div></div>
         <div class="stat"><div class="k">Map</div><div class="v" style="font-size:16px">${esc(theme)} ${st.map.w}×${st.map.h}</div></div>
         <div class="stat"><div class="k">${this.teamMode() ? 'Teams' : 'Forces'}</div><div style="font-size:15px">${(st.teams || st.sides.map((x, i) => ({ members: [i] }))).map((t, ti) => t.members.map((i) => `<span style="color:${st.sides[i].color}">${esc(st.sides[i].name)}</span> ${st.mechs.filter((m) => m.side === i).length}`).join(' + ')).join(' <span class="faint">vs</span> ')}</div></div>
       </div>

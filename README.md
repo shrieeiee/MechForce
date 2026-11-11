@@ -70,7 +70,8 @@ Run a **mercenary company**: four mechs and 4M C-bills to start, contracts from 
 
 ## Computer skill, saves and replays
 
-- **Easy / Normal / Hard / Veteran** computer opponents (skills, focus fire, risk-taking, how early they press for a result). Computer commanders grow bolder as the round limit nears, so battles end.
+- **Easy / Normal / Hard / Veteran** computer opponents (skills, focus fire, risk-taking, how early they press for a result). Normal and harder lances focus fire on damaged mechs; computer commanders grow bolder as the round limit nears. Under 10% of Normal computer-vs-computer battles now reach the limit (down from about 30%).
+- **Round limit**: Standard, Long (×1.5) or None, in the battle setup (Hold Position's is fixed).
 - **Resume battle**: local battles save after every move.
 - **Replays** of every finished battle (online ones included): pause, step, next round, up to 8× speed. Battles are deterministic, so a replay is the starting state plus everyone's orders (~30 KB). Save as a file or share as a text code.
 

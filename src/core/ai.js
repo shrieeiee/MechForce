@@ -1,4 +1,5 @@
 // Computer opponent. Returns one command at a time for the active AI side.
+import { maxRounds } from './rules.js';
 import { WEAPONS, TERRAIN } from './data.js';
 import { computeReach, canEndAt, toHit, availableMechs, operational, canAct, lineOfSight, inArc, missionOf,
   expectedDamage, dissipation, totalArmor, maxArmor, tileOf, toHitUnit, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo, toHitStructure, envHeat, smokeAt, isBurning, defenceTargets, dfaDamage, dfaSelfDamage, pilotingMods, elevOf } from './rules.js';
@@ -71,7 +72,8 @@ function bestVolley(opts, budget) {
 const levelOf = (st) => AI_LEVELS[st.aiLevel] || AI_LEVELS.normal;
 function pressureOf(st) {
   const L = levelOf(st);
-  const limit = missionOf(st).rounds || 30;
+  // with no round limit, commanders still get impatient as if it were the mission's own
+  const limit = maxRounds(st) || missionOf(st).rounds || 30;
   return Math.max(0, Math.min(1, (st.round - L.pressureFrom) / Math.max(4, limit - L.pressureFrom)));
 }
 
@@ -162,7 +164,8 @@ function evalPositions(st, m) {
           }
           if (opts.length) {
             const v = bestVolley(opts, heatBudget(st, m, mvHeat));
-            const finish = totalArmor(e) < v.dmg * 2.5 ? 1.6 : 1;
+            // close in on the enemy closest to falling, so the lance converges on one target
+            const finish = (totalArmor(e) < v.dmg * 2.5 ? 1.6 : 1) * (1 + (1 - totalArmor(e) / maxArmor(e)) * L.focus * 0.6);
             const carrierBonus = st.item && st.item.carrier === e.id ? 1.5 : 1;
             offense = Math.max(offense, v.dmg * finish * carrierBonus);
           }
@@ -248,11 +251,13 @@ function chooseAttack(st, m) {
       opts.push({ w: wp, ed: expectedDamage(wp, th.p), heat: wp.heat });
     }
     if (opts.length) {
-      const killable = totalArmor(e) < 25;
-      const v = bestVolley(opts, killable ? budget + 6 : budget);
-      // focus fire: better pilots finish what their lancemates started
+      const v0 = bestVolley(opts, budget);
+      // a target this volley (or a hot one) could finish is worth running hot for
+      const killable = totalArmor(e) < Math.max(25, v0.dmg * 1.6);
+      const v = killable ? bestVolley(opts, budget + 6) : v0;
+      // focus fire: pilots finish what their lancemates started, more so the better they are
       const hurt = 1 - totalArmor(e) / maxArmor(e);
-      let val = v.dmg * (killable ? 1.5 : 1) * (st.item && st.item.carrier === e.id ? 1.6 : 1) * (1 + hurt * L.focus);
+      let val = v.dmg * (killable ? 1.5 : 1) * (st.item && st.item.carrier === e.id ? 1.6 : 1) * (1 + hurt * L.focus * 1.6);
       if (v.picked.length) cands.push({ v: val, cmd: { type: 'attack', id: m.id, target: e.id, weapons: v.picked.map((o) => o.w.i) } });
       if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, target: e.id, weapons: v.picked.map((o) => o.w.i) } };
     }
@@ -262,7 +267,9 @@ function chooseAttack(st, m) {
       const dmg = kind === 'dfa' ? dfaDamage(m) : kind === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10);
       // death from above hurts the attacker too: its legs on a hit, a nasty fall on a miss
       const risk = kind === 'dfa' ? th.p * dfaSelfDamage(m) * 0.25 + (1 - th.p) * dmg * 0.35 : 0;
-      const val = th.p * dmg * (kind === 'kick' ? 0.85 : 1) * (kind === 'dfa' && totalArmor(e) < dmg * 2.5 ? 1.6 : 1) - risk;
+      // the same focus-fire pull as shooting, so a pilot doesn't shoot a wreck it could stamp on
+      const focusM = 1 + (1 - totalArmor(e) / maxArmor(e)) * L.focus * 1.6;
+      const val = th.p * dmg * (kind === 'kick' ? 0.85 : 1) * (kind === 'dfa' && totalArmor(e) < dmg * 2.5 ? 1.6 : 1) * focusM - risk;
       if (val > best.v) best = { v: val, cmd: { type: 'melee', id: m.id, target: e.id, kind } };
     }
   }

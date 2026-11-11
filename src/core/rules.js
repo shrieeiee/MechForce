@@ -40,6 +40,7 @@ export function createGame(setup) {
   const st = {
     v: 1, seed, gid: String(setup.gid || 'g' + seed), rng: hashSeed('dice' + seed), mission: mission.id, map, round: 0, over: false, fog: !!setup.fog, seen: {},
     structures: [], units: [], fire: {}, smoke: {}, wind: 0, aiLevel: AI_LEVELS[setup.aiLevel] ? setup.aiLevel : 'normal',
+    roundLimit: ROUND_LIMITS.includes(setup.roundLimit) ? setup.roundLimit : 'standard',
     sides: [], teams: [], mechs: [], order: [], turnIdx: 0, act: null, item: null, winner: null, log: [], seq: 0,
   };
   const teamOfSide = assignTeams(setup.sides.slice(0, nSides), mission);
@@ -515,9 +516,18 @@ export function checkVictory(st, ev) {
   }
 }
 
+// The battle's round limit: the mission's own, half again as long, or none at all. Hold
+// Position is won by holding out, so its limit never changes. 0 means no limit.
+export const ROUND_LIMITS = ['standard', 'long', 'none'];
+export function maxRounds(st) {
+  const mis = missionOf(st);
+  if (mis.id === 'hold' || !st.roundLimit || st.roundLimit === 'standard') return mis.rounds;
+  return st.roundLimit === 'long' ? Math.round(mis.rounds * 1.5) : 0;
+}
 function roundLimit(st, ev) {
   const mis = missionOf(st);
-  if (st.round <= mis.rounds) return false;
+  const lim = maxRounds(st);
+  if (!lim || st.round <= lim) return false;
   const byId = {
     hold: [0, 'The position held for 500 seconds.'], datapack: [1, 'The datapack was never recovered.'],
     pepsi: [1, 'The Pepsi never arrived.'], scout: [1, 'The scouts never returned.'],
