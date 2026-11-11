@@ -607,3 +607,23 @@ table.tt td { padding: 2px 8px 2px 0; vertical-align: top; } table.tt td:first-c
 .sm-bar { margin-top: 4px; max-width: 260px; }
 .cp-log { padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 14px; }
 .cp-found { max-width: 640px; margin: 6vh auto 0; }
+
+/* ---- replays */
+.replays .rp-list { max-height: calc(100vh - 260px); overflow-y: auto; gap: 6px; }
+.rp-row { gap: 6px; align-items: stretch; }
+.rp-row .grow { flex: 1; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.rp-row .grow .val { font-size: 12px; opacity: 0.7; margin: 0; }
+.rp-actions { gap: 8px; margin-top: 10px; }
+.replay-hud { position: absolute; inset: 0; pointer-events: none !important; }
+.replay-hud > * { pointer-events: auto; }
+.rp-top { position: absolute; top: max(12px, env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); padding: 10px 14px; min-width: min(560px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 6px; }
+.rp-line { font-size: 14px; }
+.rp-bar { height: 4px; background: rgba(255, 255, 255, 0.12); border-radius: 2px; overflow: hidden; }
+.rp-bar span { display: block; height: 100%; background: var(--amber, #ffb23e); }
+.rp-ctl { gap: 6px; flex-wrap: wrap; }
+.rp-end { font-weight: 600; color: var(--amber, #ffb23e); }
+.rp-log { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: 70px; width: min(460px, calc(100vw - 32px)); padding: 8px 12px; font-size: 13px; line-height: 1.4; opacity: 0.92; }
+.rp-log:empty { display: none; }
+.paste-dlg { width: min(520px, calc(100vw - 32px)); }
+.paste-dlg textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; background: rgba(0, 0, 0, 0.35); color: inherit; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; padding: 8px; resize: vertical; }
+.rp-sides { display: block; } .rp-sides span { text-transform: none; }

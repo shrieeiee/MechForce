@@ -24,6 +24,8 @@ import { Room, lanceTons, autoLance, entryTons } from '../core/room.js';
 import { totalArmor, maxArmor, pilotingTN, reactorBlast, SELF_DESTRUCT_TN } from '../core/rules.js';
 import { loadMaps } from './mapstore.js';
 import { loadResume, saveResume, clearResume } from './resumestore.js';
+import { saveReplay } from './replaystore.js';
+import { showReplays, watchReplay } from './replays.js';
 import { showCampaign, loadCompany, saveCompany, campaignDebriefHTML } from './campaign.js';
 import { settle, enemyLance, templateOf } from '../core/campaign.js';
 import { patch, jclone } from '../core/delta.js';
@@ -270,6 +272,7 @@ class App {
         else if (this.screen === 'battle') this.battle.onError(msg.msg);
         else toast(msg.msg);
         break;
+      case 'replay': this.lastReplay = msg.replay; if (!saveReplay(msg.replay)) console.warn('replay not saved'); if (this.modal && this.modal.el.querySelector('[data-key=watch]')) this.modal.el.querySelector('[data-key=watch]').classList.remove('hidden'); break;
       case 'chat': if (this.screen === 'battle') this.battle.pushFeed(`${msg.from}: ${msg.text}`, 'chat'); break;
       case '_status':
         if (msg.status === 'reconnecting') toast('Connection lost — reconnecting…');
@@ -409,6 +412,7 @@ class App {
       { k: 'barracks', label: 'Barracks', hint: 'Your MechWarriors', fn: () => showBarracks(this, { onExit: () => this.showTitle() }) },
       { k: 'lab', label: 'Mech Lab', hint: 'Design your own mechs', fn: () => this.openLab(null, -1, () => this.showTitle()) },
       { k: 'editor', label: 'Map Editor', hint: 'Build battlefields and defences', fn: () => showEditor(this, { onExit: () => this.showTitle() }) },
+      { k: 'replays', label: 'Replays', hint: 'Watch past battles', fn: () => showReplays(this, { onExit: () => this.showTitle() }) },
       { k: 'manual', label: 'How to Play', hint: 'Turns, aiming, heat, damage', fn: () => this.showManual() },
       { k: 'settings', label: 'Settings', hint: '', fn: () => this.showSettings(() => this.showTitle()) },
       canQuit ? { k: 'quit', label: 'Quit', hint: '', fn: () => native.quit() } : null,
@@ -1040,6 +1044,7 @@ class App {
       ${mvp ? `<div class="dim">Top performer: <b style="color:var(--ink)">${esc(mvp.design)}</b> (${esc(mvp.pilot.name)}) — ${mvp.stats.dmg} damage, ${mvp.stats.kills} kill${mvp.stats.kills === 1 ? '' : 's'}</div>` : ''}
       <div class="stack">${this.campaignRun ? '<div class="btn primary nav" data-key="company">Back to the company</div>' : canRematch ? '<div class="btn primary nav" data-key="again">Back to lobby</div>' : '<div class="faint">Waiting for the host…</div>'}
       ${deb ? '<div class="btn nav" data-key="barracks">Barracks — spend experience</div>' : ''}
+      <div class="btn nav ${this.lastReplay && this.lastReplay.start && this.lastReplay.start.gid === st.gid ? '' : 'hidden'}" data-key="watch">Watch the replay</div>
       <div class="btn nav" data-key="field">View battlefield</div>
       <div class="btn nav" data-key="quit">Quit to title</div></div></div>`);
     const coBtn = $('[data-key=company]', el);
@@ -1047,6 +1052,11 @@ class App {
     const again = $('[data-key=again]', el);
     if (again) again.addEventListener('click', () => { this.closeModal(); this.session.send({ t: 'lobby' }); });
     $('[data-key=field]', el).addEventListener('click', () => { this.closeModal(); });
+    $('[data-key=watch]', el).addEventListener('click', () => {
+      const rp = this.lastReplay; if (!rp) return;
+      this.closeModal(); this.endSession(); this.campaignRun = null;
+      watchReplay(this, rp, { onExit: () => this.showTitle() });
+    });
     const bk = $('[data-key=barracks]', el);
     if (bk) bk.addEventListener('click', () => { this.closeModal(); this.endSession(); showBarracks(this, { onExit: () => this.showTitle() }); });
     $('[data-key=quit]', el).addEventListener('click', () => { this.closeModal(); this.endSession(); this.showTitle(); });

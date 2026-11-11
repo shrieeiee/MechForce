@@ -1,5 +1,6 @@
 // Lobby + authoritative game room. Transport-agnostic: used by the Node server
 // (LAN host / dedicated / internet) and in-process for single player & hotseat.
+import { startReplay, recordCmd, finishReplay } from './replay.js';
 import { createGame, applyCommand, activeSide } from './rules.js';
 import { aiNextCommand } from './ai.js';
 import { MECHS, MISSIONS, PROTOCOL, VERSION, SIDE_NAMES, SIDE_COLORS, mechBV, AI_LEVEL_IDS } from './data.js';
@@ -278,6 +279,7 @@ export class Room {
           gid: rid() + rid(),
           sides: this.slots.map((sl) => ({ name: sl.name, color: sl.color, ctrl: sl.ctrl, lance: sl.lance, team: sl.team, gunnery: 4, piloting: 5, pilots: sl.ctrl === 'ai' ? [] : sl.pilots || [], damage: sl.damage || null })),
         });
+        this.replay = startReplay(this.game);
         for (const cl of this.clients.values()) if (cl.connected) this.sendStart(cl);
         this.pushLobby();
         return this.scheduleAI();
@@ -288,8 +290,10 @@ export class Room {
         const side = msg.side ?? activeSide(g);
         if (side !== activeSide(g)) return err('Not your turn');
         if (g.sides[side].ctrl !== id) return err('Not your side');
+        const cmd = JSON.parse(JSON.stringify(msg.cmd || {}));
         const r = applyCommand(g, side, msg.cmd);
         if (!r.ok) return err(r.error);
+        this.record(side, cmd);
         this.broadcastGame(r.events);
         return this.scheduleAI(r.events);
       }
@@ -299,6 +303,7 @@ export class Room {
         g.sides.forEach((s, i) => {
           if (s.ctrl === id && !s.conceded && (msg.side === undefined || msg.side === i)) {
             const r = applyCommand(g, i, { type: 'concede' });
+            if (r.ok) this.record(i, { type: 'concede' });
             this.broadcastGame(r.events);
           }
         });
@@ -328,6 +333,18 @@ export class Room {
     }
   }
 
+  // replays: every command that changed the game, in order; sent to everyone at the end
+  record(side, cmd) {
+    if (!this.replay || !this.game) return;
+    recordCmd(this.replay, side, cmd);
+    if (this.game.over && !this.replay.sent) {
+      this.replay.sent = true;
+      const rep = finishReplay(this.replay, this.game, { version: VERSION });
+      delete rep.sent;
+      this.broadcast({ t: 'replay', replay: rep });
+    }
+  }
+
   scheduleAI(events) {
     clearTimeout(this.aiTimer);
     const g = this.game;
@@ -348,8 +365,10 @@ export class Room {
     if (side < 0 || g.sides[side].ctrl !== 'ai') return;
     let cmd = aiNextCommand(g);
     if (!cmd) return;
+    const copy = JSON.parse(JSON.stringify(cmd));
     let r = applyCommand(g, side, cmd);
-    if (!r.ok && cmd.id !== undefined) r = applyCommand(g, side, { type: 'end', id: cmd.id });
+    if (r.ok) this.record(side, copy);
+    else if (cmd.id !== undefined) { r = applyCommand(g, side, { type: 'end', id: cmd.id }); if (r.ok) this.record(side, { type: 'end', id: cmd.id }); }
     if (!r.ok) return;
     this.broadcastGame(r.events);
     this.scheduleAI(r.events);
@@ -358,13 +377,14 @@ export class Room {
   // ---- save and resume (local games): the lobby and the battle in progress
   snapshot() {
     if (!this.game || this.game.over) return null;
-    return { settings: this.settings, slots: this.slots, game: this.game, hostId: this.hostId };
+    return { settings: this.settings, slots: this.slots, game: this.game, hostId: this.hostId, replay: this.replay || null };
   }
   restore(snap, id) {
     const swap = (ctrl) => (ctrl === snap.hostId ? id : ctrl);
     this.settings = { ...this.settings, ...snap.settings };
     this.slots = snap.slots.map((sl) => ({ ...sl, ctrl: swap(sl.ctrl) }));
     this.game = snap.game;
+    this.replay = snap.replay || null;
     for (const sd of this.game.sides) sd.ctrl = swap(sd.ctrl);
     const c = this.clients.get(id);
     if (c) this.sendStart(c);
