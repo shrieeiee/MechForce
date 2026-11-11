@@ -5,6 +5,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { center, DIR_ANGLE, toAxial, fromAxial, neighbor } from '../core/hex.js';
 import { WEAPONS, TERRAIN, UNITS } from '../core/data.js';
+import { view as palView, RING_SEGMENTS, shapeFor } from './palette.js';
 import { totalArmor, maxArmor, operational } from '../core/rules.js';
 import { buildMech, buildItem, triggerWeaponAnim, tickWeaponAnims, rollTracks, buildStructure, buildUnit, skinMerge, BAKED_MAT } from './models.js';
 import { sfx } from './audio.js';
@@ -318,14 +319,16 @@ export class Renderer {
         const color = state.sides[m.side].color;
         const model = buildMech({ design: m.design, tons: m.tons, cls: m.cls, weapons: m.weapons, jump: m.jumpBase, body: m.body, mot: m.mot }, color);
         skinMerge(model.root);
-        const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.74, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false }));
-        ring.rotation.x = -Math.PI / 2; ring.rotation.z = Math.PI / 6;
+        // colour-blind mode: each side's ring has its own shape (hexagon, triangle, square, octagon)
+        const seg = palView.shapes ? RING_SEGMENTS[m.side % 4] : 6;
+        const ring = new THREE.Mesh(new THREE.RingGeometry(seg === 3 ? 0.55 : 0.62, seg === 3 ? 0.72 : 0.74, seg), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false }));
+        ring.rotation.x = -Math.PI / 2; ring.rotation.z = seg === 6 ? Math.PI / 6 : seg === 4 ? Math.PI / 4 : seg === 3 ? Math.PI / 2 : 0;
         model.root.add(ring);
         ring.position.y = 0.03;
         const label = document.createElement('div');
         label.className = 'mlabel';
         label.style.setProperty('--side', color);
-        label.innerHTML = `<b></b><i><s class="arm"></s></i><i class="h"><s class="heat"></s></i>`;
+        label.innerHTML = `${shapeFor(m.side) ? `<em class="shape">${shapeFor(m.side)}</em>` : ''}<b></b><i><s class="arm"></s></i><i class="h"><s class="heat"></s></i>`;
         this.labelLayer.appendChild(label);
         v = { id: m.id, model, ring, label, prone: false, dead: false, walk: 0, torsoYaw: 0, wantYaw: 0, smoke: null, color };
         this.mechs.set(m.id, v);

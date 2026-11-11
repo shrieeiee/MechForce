@@ -10,6 +10,7 @@ import { $, $$, html, esc, promptBar, toast, banner, paperDoll, FocusNav, glyphH
 import { input } from './input.js';
 import { sfx, music } from './audio.js';
 import { ICON } from './icons.js';
+import { shapeFor } from './palette.js';
 import { structTip, forceTip, attr, weaponTip, heatTip, MODE_TIP, moveDefense, turnOrderTip, terrainTip, pilotTip, ARMOR_TIP, statusTip, hitDirTip, brackets, reasonText, modLine, hideTip, tipGC, SHIFT_TIP, CONVERT_TIP, CHASSIS_TIP, chassisName, chassisTag, locAbbr } from './tips.js';
 
 const BASE_COLOR = { walk: '#5fd3ff', run: '#ffb23e', jump: '#b98cff', track: '#7ee0a8', cruise: '#7ee0a8', flank: '#ffd166' };
@@ -675,7 +676,7 @@ export class Battle {
       }).join('');
       const now = i === side && !st.over;
       return `${k ? `<span class="tr-arrow">${ICON.arrow}</span>` : ''}<div class="tr-side ${now ? 'now' : ''}" style="--side:${s.color}">
-        <span class="tr-name">${esc(s.name.replace(/ Force$/, ''))}${this.isMine(i) ? ' <small>you</small>' : this.isAlly(i) ? ' <small>ally</small>' : ''}${this.teamMode() ? `<em class="tr-team">T${(s.team ?? i) + 1}</em>` : ''}</span>
+        <span class="tr-name">${shapeFor(i) ? `<em class="shape">${shapeFor(i)}</em> ` : ''}${esc(s.name.replace(/ Force$/, ''))}${this.isMine(i) ? ' <small>you</small>' : this.isAlly(i) ? ' <small>ally</small>' : ''}${this.teamMode() ? `<em class="tr-team">T${(s.team ?? i) + 1}</em>` : ''}</span>
         <span class="tr-die">${ICON.dice}${s.init}</span><span class="tr-pips">${pips}</span></div>`;
     }).join('');
     return `<div class="tracker panel" ${attr('Turn order', turnOrderTip(st))}>
@@ -824,7 +825,7 @@ export class Battle {
     const selectable = mine && ix.mode === 'move';
     const conv = isQuadVee(m) && selectable && canConvert(st, m);
     const card = html(`<div class="unit-card panel ${other ? 'target' : ''}" style="--side:${s.color}">
-      <div class="uc-head"><div><div class="eyebrow">${CLASS_NAMES[m.cls]} · ${m.tons}t · ${esc(s.name)}</div><b>${esc(m.design)}</b>${m.body !== 'biped' || m.mot ? ` <span class="ctag" ${attr(chassisName(m), CHASSIS_TIP[m.mot || m.body])}>${esc(chassisTag(m))}</span>` : ''}</div>
+      <div class="uc-head"><div><div class="eyebrow">${CLASS_NAMES[m.cls]} · ${m.tons}t · ${shapeFor(m.side) ? shapeFor(m.side) + ' ' : ''}${esc(s.name)}</div><b>${esc(m.design)}</b>${m.body !== 'biped' || m.mot ? ` <span class="ctag" ${attr(chassisName(m), CHASSIS_TIP[m.mot || m.body])}>${esc(chassisTag(m))}</span>` : ''}</div>
         <span class="chip-sm" ${attr('Armour remaining', 'Total armour and internal structure left, compared with a fresh mech.')}>${ICON.shield} ${Math.round(arm * 100)}%</span></div>
       <div class="uc-body">
         <div class="doll" ${attr('Armour diagram', ARMOR_TIP)}>${paperDoll(m)}</div>

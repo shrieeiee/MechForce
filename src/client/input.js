@@ -28,11 +28,32 @@ export function glyphSet() {
 }
 
 // ----------------------------------------------------------------- keyboard
-const KEYMAP = {
+const DEFAULT_KEYMAP = {
   ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   Enter: 'confirm', Space: 'confirm', NumpadEnter: 'confirm', Escape: 'back', Backspace: 'back',
   KeyF: 'x', KeyR: 'y', KeyH: 'help', KeyC: 'camcentre', Tab: 'rb', KeyT: 'view', KeyP: 'menu', F10: 'menu',
 };
+let KEYMAP = { ...DEFAULT_KEYMAP };
+// Rebindable actions, with each one's main key (arrows, Enter, Escape and F10 always work)
+export const KEY_ACTIONS = [
+  ['up', 'Cursor up'], ['down', 'Cursor down'], ['left', 'Cursor left'], ['right', 'Cursor right'],
+  ['confirm', 'Select / confirm'], ['back', 'Back / cancel'], ['x', 'Fire / stay here'], ['y', 'Move mode / melee'],
+  ['rb', 'Next mech / target'], ['view', 'End turn'], ['menu', 'Menu'], ['help', 'How to play'], ['camcentre', 'Centre camera'],
+];
+const PRIMARY = { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', confirm: 'Space', back: 'Backspace', x: 'KeyF', y: 'KeyR', rb: 'Tab', view: 'KeyT', menu: 'KeyP', help: 'KeyH', camcentre: 'KeyC' };
+const FIXED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'NumpadEnter', 'Escape', 'F10']);
+let overrides = {};
+export function setKeyOverrides(o) {
+  overrides = { ...(o || {}) };
+  KEYMAP = { ...DEFAULT_KEYMAP };
+  for (const [action, code] of Object.entries(overrides)) {
+    if (!PRIMARY[action] || FIXED.has(code)) continue;
+    if (KEYMAP[PRIMARY[action]] === action) delete KEYMAP[PRIMARY[action]];
+    KEYMAP[code] = action;
+  }
+}
+export const keyFor = (action) => overrides[action] || PRIMARY[action];
+export const keyName = (code) => String(code || '').replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ').replace(/Left$|Right$/, (m) => ' ' + m.toLowerCase());
 const keysDown = new Set();
 window.addEventListener('keydown', (e) => {
   if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) {
@@ -41,8 +62,8 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   setDevice('kb');
-  if (e.code === 'KeyQ') { keysDown.add('KeyQ'); e.preventDefault(); return; }
-  if (e.code === 'KeyE') { keysDown.add('KeyE'); e.preventDefault(); return; }
+  if (e.code === 'KeyQ' && !KEYMAP.KeyQ) { keysDown.add('KeyQ'); e.preventDefault(); return; }
+  if (e.code === 'KeyE' && !KEYMAP.KeyE) { keysDown.add('KeyE'); e.preventDefault(); return; }
   if (e.code === 'Equal' || e.code === 'NumpadAdd') { input.zoom -= 1; return; }
   if (e.code === 'Minus' || e.code === 'NumpadSubtract') { input.zoom += 1; return; }
   if (e.code === 'F11') { window.mfNative?.toggleFullscreen?.(); e.preventDefault(); return; }
@@ -127,7 +148,10 @@ const GLYPHS = {
   touch: { confirm: 'Tap', back: 'Back', x: '', y: '', lb: '‹', rb: '›', lt: '', rt: '', view: '', menu: '☰', up: '', down: '', left: '', right: '', lr: '', dpad: '', stick: '', cam: '' },
 };
 export function glyph(action) {
-  const set = GLYPHS[glyphSet()] || GLYPHS.kb;
+  const gs = glyphSet();
+  // rebound keys show their new key in the prompts
+  if ((gs === 'kb' || !GLYPHS[gs]) && overrides[action]) return keyName(overrides[action]).toUpperCase();
+  const set = GLYPHS[gs] || GLYPHS.kb;
   return set[action] ?? action;
 }
 export function glyphClass(action) {

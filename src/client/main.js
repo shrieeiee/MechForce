@@ -25,6 +25,8 @@ import { totalArmor, maxArmor, pilotingTN, reactorBlast, SELF_DESTRUCT_TN } from
 import { loadMaps } from './mapstore.js';
 import { loadResume, saveResume, clearResume } from './resumestore.js';
 import { saveReplay } from './replaystore.js';
+import { view as palView, paint } from './palette.js';
+import { setKeyOverrides, KEY_ACTIONS, keyFor, keyName } from './input.js';
 import { showReplays, watchReplay } from './replays.js';
 import { showCampaign, loadCompany, saveCompany, campaignDebriefHTML } from './campaign.js';
 import { settle, enemyLance, templateOf } from '../core/campaign.js';
@@ -46,7 +48,7 @@ style.textContent = `
 ` + css;
 document.head.appendChild(style);
 
-const DEFAULTS = { name: '', quality: isCapacitor ? 'medium' : 'high', speed: 1, camSpeed: 1, sfx: 0.8, music: 0.4, sound: 'modern', glyphs: 'auto', tips: true, turn: '', signal: '', lastServer: '', lastRoom: '', tonnage: 200 };
+const DEFAULTS = { name: '', quality: isCapacitor ? 'medium' : 'high', speed: 1, camSpeed: 1, sfx: 0.8, music: 0.4, sound: 'modern', glyphs: 'auto', tips: true, turn: '', signal: '', lastServer: '', lastRoom: '', tonnage: 200, colorblind: false, textScale: 1, keys: {} };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('mechforce.settings') || '{}') }; } catch { return { ...DEFAULTS }; }
 }
@@ -99,6 +101,10 @@ class App {
     input.forcedGlyphs = s.glyphs;
     tipSettings.on = s.tips !== false;
     document.documentElement.dataset.device = s.glyphs !== 'auto' ? s.glyphs : input.device;
+    // accessibility: colour-blind palette and shapes, text size, key bindings
+    palView.palette = s.colorblind ? 'colorblind' : 'standard'; palView.shapes = !!s.colorblind;
+    for (const id of ['ui', 'labels', 'floats']) { const el = document.getElementById(id); if (el) el.style.zoom = s.textScale && s.textScale !== 1 ? String(s.textScale) : ''; }
+    setKeyOverrides(s.keys || {});
     applyVolumes();
   }
 
@@ -257,15 +263,15 @@ class App {
     switch (msg.t) {
       case 'welcome': this.isHost = msg.host; break;
       case 'lobby': {
-        this.lobby = msg.lobby;
+        this.lobby = paint(msg.lobby);
         this.isHost = msg.lobby.host === this.session.myId;
         this.autoPilots();
         if (this.screen === 'lobby') this.renderScreen();
         else if (!msg.lobby.inGame && this.screen !== 'bay' && this.screen !== 'battle' && !(this.campaignRun && !this.campaignRun.done)) this.showLobby();
         break;
       }
-      case 'start': this.netState(msg); this.stopAttract(); this.screen = 'battle'; this.closeModal(); this.renderScreen = null; this.screenAction = null; this.battle.start(msg.state); break;
-      case 'update': if (this.screen === 'battle' && this.netState(msg)) { this.battle.onUpdate(msg); this.autosave(msg.state); } break;
+      case 'start': this.netState(msg); paint(msg.state); this.stopAttract(); this.screen = 'battle'; this.closeModal(); this.renderScreen = null; this.screenAction = null; this.battle.start(msg.state); break;
+      case 'update': if (this.screen === 'battle' && this.netState(msg) && paint(msg.state)) { this.battle.onUpdate(msg); this.autosave(msg.state); } break;
       case 'tolobby': this.closeModal(); this.battle.stop(); this.showLobby(); break;
       case 'error':
         if (msg.fatal) { toast(msg.msg); this.endSession(); this.showTitle(); }
@@ -922,6 +928,8 @@ class App {
       { k: 'music', label: 'Music', opts: [0, 0.2, 0.4, 0.6, 0.8, 1], fmt: (v) => Math.round(v * 10) + '/10' },
       { k: 'sound', label: 'Weapon sounds', opts: ['modern', 'amiga', 'both'], fmt: (v) => ({ modern: 'Modern', amiga: 'Original Amiga', both: 'Both' }[v]) },
       { k: 'tips', label: 'Tooltips & hints', opts: [true, false], fmt: (v) => (v ? 'On' : 'Off') },
+      { k: 'colorblind', label: 'Colour-blind mode', opts: [false, true], fmt: (v) => (v ? 'On — distinct colours and shapes' : 'Off') },
+      { k: 'textScale', label: 'Text size', opts: [0.9, 1, 1.15, 1.3], fmt: (v) => ({ 0.9: 'Small', 1: 'Normal', 1.15: 'Large', 1.3: 'Extra large' }[v] || 'Normal') },
       { k: 'glyphs', label: 'Button prompts', opts: ['auto', 'xbox', 'ps', 'kb'], fmt: (v) => ({ auto: 'Automatic', xbox: 'Xbox / Steam Deck', ps: 'PlayStation', kb: 'Keyboard' }[v]) },
     ];
     const change = (k, dir) => {
@@ -945,6 +953,9 @@ class App {
         b.addEventListener('click', () => change(d.k, 1));
         box.appendChild(b);
       }
+      const kb = html('<div class="btn nav" data-key="keys">Keyboard controls…<span class="val">Rebind keys</span></div>');
+      kb.addEventListener('click', () => this.showKeys(() => render()));
+      box.appendChild(kb);
       const adv = html(`<div class="panel pad stack"><div class="eyebrow">Online play (advanced)</div>
         <div class="field"><label for="sturn">TURN relay for strict networks</label><input id="sturn" class="nav" data-key="turn" placeholder="turn:user:password@relay.example.com:3478" value="${esc(s.turn || '')}" autocomplete="off" spellcheck="false"></div>
         <div class="field"><label for="ssig">Matchmaking server (blank = free public PeerJS server)</label><input id="ssig" class="nav" data-key="signal" placeholder="https://my-peerjs-server.example.com/" value="${esc(s.signal || '')}" autocomplete="off" spellcheck="false"></div>
@@ -966,6 +977,38 @@ class App {
     };
     const prev = { screen: this.screen, render: this.renderScreen, action: this.screenAction, back: this.onBack };
     this.setScreen('settings', render, act, back || (() => this.setScreen(prev.screen, prev.render, prev.action, prev.back)));
+  }
+
+  // Rebind keyboard keys: pick an action, press the new key
+  showKeys(done) {
+    const s = this.settings;
+    let waiting = null;
+    const el = html('<div class="panel pad stack modal keys-dlg"><div class="eyebrow">Keyboard controls</div><div class="faint">Choose an action, then press the key you want for it. Arrow keys always move the cursor too.</div><div class="stack key-list"></div><div class="row"><div class="btn nav" data-key="reset">Reset to defaults</div><div class="btn primary nav" data-key="done">Done</div></div></div>');
+    const list = $('.key-list', el);
+    const draw = () => {
+      list.innerHTML = '';
+      for (const [a, label] of KEY_ACTIONS) {
+        const b = html(`<div class="btn nav" data-key="k-${a}">${esc(label)}<span class="val">${waiting === a ? 'Press a key…' : esc(keyName(keyFor(a)))}</span></div>`);
+        b.addEventListener('click', () => { waiting = a; draw(); });
+        list.appendChild(b);
+      }
+    };
+    const onKey = (e) => {
+      if (!waiting) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (e.code === 'Escape') { waiting = null; draw(); return; }
+      s.keys = { ...(s.keys || {}) };
+      for (const [k, v] of Object.entries(s.keys)) if (v === e.code) delete s.keys[k]; // one action per key
+      s.keys[waiting] = e.code;
+      waiting = null;
+      this.saveSettings(); sfx('ui-ok'); draw();
+    };
+    window.addEventListener('keydown', onKey, true);
+    const close = () => { window.removeEventListener('keydown', onKey, true); this.closeModal(); if (done) done(); };
+    $('[data-key=reset]', el).addEventListener('click', () => { s.keys = {}; this.saveSettings(); draw(); toast('Keys reset', true); });
+    $('[data-key=done]', el).addEventListener('click', close);
+    draw();
+    this.openModal(el, { onBack: () => { if (!waiting) close(); }, prompts: [{ a: 'confirm', label: 'Rebind' }, { a: 'back', label: 'Done' }] });
   }
 
   // ---- in battle

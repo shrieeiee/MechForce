@@ -6,6 +6,7 @@ import { $, $$, html, esc, toast, banner } from './ui.js';
 import { sfx, music } from './audio.js';
 import { loadReplays, saveReplay, deleteReplay, MAX_REPLAYS } from './replaystore.js';
 import { saveFile, openFile, toCode, fromCode, copyText } from './files.js';
+import { paint } from './palette.js';
 
 const missionName = (id) => (MISSIONS.find((m) => m.id === id) || { name: id }).name;
 const describe = (r) => {
@@ -82,6 +83,7 @@ export function watchReplay(app, rep, { onExit } = {}) {
   let playing = true, speedI = 1, busy = false, stopped = false, skipTo = null;
   const oldSpeed = r.speed;
   const setup = () => {
+    paint(pl.state);
     r.buildMap(pl.state.map);
     r.syncMechs(pl.state); r.syncStructures(pl.state); r.syncUnits(pl.state); r.setEnvironment(pl.state);
     const mm = pl.state.mechs.filter((m) => m.x >= 0);
@@ -130,7 +132,7 @@ export function watchReplay(app, rep, { onExit } = {}) {
     const skipping = skipTo !== null && pl.state.round < skipTo;
     if (skipTo !== null && pl.state.round >= skipTo) skipTo = null;
     if (res) {
-      const view = JSON.parse(JSON.stringify(pl.state));
+      const view = paint(JSON.parse(JSON.stringify(pl.state)));
       if (skipping) { r.syncMechs(view); r.syncStructures(view); r.syncUnits(view); r.setEnvironment(view); if (pl.state.round !== roundBefore) r.updateTerrain(view.map); }
       else {
         if (pl.state.round !== roundBefore) banner(`Round ${pl.state.round}`, 'Replay');
