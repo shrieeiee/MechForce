@@ -18,7 +18,7 @@ export function makeStructure(id, d, nTeams) {
     const S = WSTAT[t];
     weapons.push({ t, heat: 0, dmg: S.dmg, rng: S.rng, minr: S.minr, slots: S.slots, ammo: WEAPONS[t].kind === 'e' ? -1 : S.ammo * 2, loc: -1, ok: true, i: weapons.length });
   }
-  return { id, kind: d.k, x: d.x, y: d.y, f: d.f || 0, team: K.slots ? team : -1, cf: K.cf, cfMax: K.cf, h: K.h, hard: K.hard, load: (d.load || []).slice(), weapons, dead: false };
+  return { id, kind: d.k, x: d.x, y: d.y, f: d.f || 0, team: K.slots || K.obj ? team : -1, cf: d.cf || K.cf, cfMax: d.cf || K.cf, h: K.h, hard: K.hard, load: (d.load || []).slice(), weapons, dead: false, ...(d.obj ? { obj: true } : {}) };
 }
 export const structureAt = (st, x, y) => (st.structures || []).find((s) => !s.dead && s.x === x && s.y === y);
 const structShooter = (s) => ({ id: -1000 - s.id, x: s.x, y: s.y, f: s.f, team: s.team, side: s.team, pilot: { gun: STRUCT_GUNNERY, pil: 5, ko: false },
@@ -41,6 +41,7 @@ function destroyStructure(st, s, ev, by) {
   delete st.fire[i];
   ev.push({ k: 'sgone', sid: s.id, x: s.x, y: s.y });
   log(st, ev, `${STRUCTS[s.kind].name} destroyed${by && by.design ? ' by ' + by.design : ''}!`, { tone: 'kill', side: s.team >= 0 ? st.teams[s.team]?.members[0] : undefined });
+  if (s.obj) checkVictory(st, ev);
 }
 export function fireAtStructure(st, m, s, weapons, ev) {
   m.reveal = { r: st.round, t: s.team };

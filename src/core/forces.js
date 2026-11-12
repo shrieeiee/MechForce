@@ -9,6 +9,7 @@ import { envHeat, hotGun, isBurning, tryIgnite } from './environment.js';
 import { unitCanStand } from './maps.js';
 import { inMap } from './map.js';
 import { distance, facingToward, neighbor } from './hex.js';
+import { convoyField } from './objectives.js';
 
 // ---------------------------------------------------------------- conventional forces
 // Infantry platoons and combat vehicles (Total Warfare, simplified). They're run by the
@@ -29,6 +30,7 @@ export function makeUnit(id, d, nTeams) {
     id, kind: d.k, x: d.x, y: d.y, f: d.f || 0, home: { x: d.x, y: d.y }, team: d.team >= 0 && d.team < nTeams ? d.team : -1, inf: !!K.inf,
     troops: K.troops || 0, troopsMax: K.troops || 0, armor: K.armor || 0, armorMax: K.armor || 0, struct: K.struct || 0, structMax: K.struct || 0,
     mp: K.mp, mpMax: K.mp, motion: K.motion, weapons, moved: 0, dead: false, immobile: false, stats: { dmg: 0, kills: 0 },
+    ...(d.convoy ? { convoy: true } : {}),
   };
 }
 // 'Battle tank' -> 'battle tank', but 'SRM platoon' keeps its capitals
@@ -74,7 +76,8 @@ export function hurtUnit(st, u, w, n, ev, by, flat) {
 // Motive damage: hovercraft and wheels are fragile (+3 / +2 to the roll)
 function motiveHit(st, u, ev) {
   if (u.immobile || u.dead) return;
-  const r = roll2d6(st) + ({ hover: 3, wheeled: 2 }[u.motion] || 0);
+  // haulers are built to keep rolling: their running gear shrugs off most hits
+  const r = roll2d6(st) + ({ hover: 3, wheeled: 2 }[u.motion] || 0) - (UNITS[u.kind].sturdy ? 2 : 0);
   if (r < 10) return;
   if (r >= 12) u.mp = 0;
   else u.mp = Math.max(0, u.mp - (r === 11 ? Math.ceil(u.mp / 2) : 1));
@@ -189,14 +192,38 @@ function unitWeaponsAt(st, u, x, y, foe) {
   }
   return { ed, opts };
 }
+// A convoy vehicle has one order: drive for the far edge by the shortest road, and leave
+// the battlefield when it gets there.
+function convoyMove(st, u, field, ev) {
+  const { w } = st.map;
+  const reach = unitReach(st, u);
+  let best = null, bs = Infinity;
+  for (const [k, c] of reach) {
+    const sc = field[k] + c * 0.01;
+    if (sc < bs) { bs = sc; best = { x: k % w, y: Math.floor(k / w), c }; }
+  }
+  if (best && (best.x !== u.x || best.y !== u.y)) {
+    const from = { x: u.x, y: u.y };
+    u.f = facingToward(u.x, u.y, best.x, best.y);
+    u.x = best.x; u.y = best.y;
+    u.moved = Math.max(1, Math.round(best.c));
+    ev.push({ k: 'umove', uid: u.id, from, x: u.x, y: u.y, f: u.f, jump: false });
+  }
+  if (field[u.y * w + u.x] === 0) {
+    u.exited = true; u.dead = true;
+    ev.push({ k: 'uexit', uid: u.id });
+    log(st, ev, `A ${lcName(UNITS[u.kind].name)} drives off the battlefield.`, { tone: 'info' });
+  }
+}
 export function unitsPhase(st, ev) {
   const live = (st.units || []).filter((u) => !u.dead);
   if (!live.length) return;
   const { w } = st.map;
-  let fired = false;
+  let fired = false, field = null;
   for (const u of live) {
     if (u.dead || st.over) continue;
     u.moved = 0;
+    if (u.convoy) { convoyMove(st, u, field || (field = convoyField(st)), ev); continue; }
     const foes = unitFoes(st, u);
     // ---- move: towards a good firing spot (cover for infantry), or home for the locals
     const reach = unitReach(st, u);

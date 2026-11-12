@@ -1,5 +1,6 @@
 // MechForce rules engine. Pure functions over a JSON-serialisable state object.
 // The same code runs on the host server, in local games, and inside the AI.
+import { MELEE_WEAPONS } from './data.js';
 import { MECHS, WEAPONS, MISSIONS, TERRAIN, FRONT_ZONE, REAR_ZONE, TRANSFER, critName, locName,
   SIDE_COLORS, SIDE_NAMES, PILOT_NAMES, mechByName, bodyOf, legLocs, LEG_ACT, CODE_TRACKS, CODE_CONVERSION,
   STRUCTS, LOADOUTS, STRUCT_GUNNERY, CLIMATE, UNITS, UNIT_GUNNERY, AI_LEVELS } from './data.js';
@@ -23,6 +24,8 @@ export { defenceTargets, makeStructure, structureAt, toHitStructure } from './st
 import { applyCrit, pilotingCheck } from './damage.js';
 import { PILOT_DEATHS, REACTOR_BREACH_TN, SELF_DESTRUCT_TN, ammoExplosion, applyDamage, destroyMech, eject, fall, pilotHit, pilotingMods, pilotingTN, reactorBlast, rollLocation, tripodLeg } from './damage.js';
 import { canEndAt, computeReach, pathFrom, reachKey } from './movement.js';
+import { addObjectives, convoyCount, objectiveStructure } from './objectives.js';
+export { convoyCount, convoyField, convoyUnits, objectiveStatus, objectiveStructure } from './objectives.js';
 export { PILOT_DEATHS, REACTOR_BREACH_TN, SELF_DESTRUCT_TN, applyDamage, pilotingCheck, pilotingMods, pilotingTN, reactorBlast, rollLocation } from './damage.js';
 export { canEndAt, computeReach, pathFrom, reachKey } from './movement.js';
 
@@ -47,6 +50,7 @@ export function createGame(setup) {
   const nTeams = Math.max(...teamOfSide) + 1;
   // structures: from the custom map, or a random battlefield's optional defences
   if (!custom) addDefences(map, seed, nTeams, setup.defences);
+  addObjectives(map, mission, seed, !!custom);
   st.structures = (map.s || []).map((d, i) => makeStructure(i, d, nTeams));
   delete map.s;
   // infantry and vehicles: placed on the custom map, plus the setup's conventional forces
@@ -201,6 +205,7 @@ function makeMech(id, side, tpl, pilot, x, y, f, sd) {
     locGone: tpl.i.map(() => 0), prone: false, shutdown: false, dead: false, exited: false,
     activated: false, lastMove: { mode: 'stand', hexes: 0 }, carrying: false, scouted: false,
     stats: { dmg: 0, kills: 0, shots: 0, hits: 0 },
+    ...(MELEE_WEAPONS[tpl.n] && !tpl.custom ? { hatchet: MELEE_WEAPONS[tpl.n].arm } : {}),
   };
 }
 
@@ -400,8 +405,30 @@ export function toHit(st, att, tgt, w, opts = {}) {
     if (!dfa && !inArc(att, 2, tgt.x, tgt.y, pos)) return { ok: false, reason: 'Out of arc', tn: 99, mods, dist };
     if (!dfa && Math.abs(elevOf(st, pos.x, pos.y) - elevOf(st, tgt.x, tgt.y)) > 1) return { ok: false, reason: 'Elevation', tn: 99, mods, dist };
     if (onTracks(att) && isQuadVee(att)) return { ok: false, reason: 'Vehicle mode', tn: 99, mods, dist };
+    const kind = opts.kind;
+    if (kind === 'hatchet') {
+      const why = hatchetProblem(att);
+      if (why) return { ok: false, reason: why, tn: 99, mods, dist };
+    }
+    if (kind === 'charge' || kind === 'push') {
+      // both are made head-on at a standing mech in the hex straight ahead
+      if (att.prone) return { ok: false, reason: 'You are prone', tn: 99, mods, dist };
+      if (tgt.structure) return { ok: false, reason: 'Mechs only', tn: 99, mods, dist };
+      if (tgt.prone) return { ok: false, reason: 'Target is prone', tn: 99, mods, dist };
+      const ahead = neighbor(pos.x, pos.y, pos.f ?? att.f);
+      if (ahead.x !== tgt.x || ahead.y !== tgt.y) return { ok: false, reason: 'Not straight ahead', tn: 99, mods, dist };
+      if (kind === 'charge' && !((mode === 'walk' || mode === 'run') && (opts.hexes ?? att.lastMove.hexes) >= 1)) return { ok: false, reason: 'Walk or run first', tn: 99, mods, dist };
+      if (kind === 'push') {
+        if (bodyOf(att) === 'quad') return { ok: false, reason: 'Four-legged', tn: 99, mods, dist };
+        if (att.locGone[4] || att.locGone[5] || att.actu.includes(29) || att.actu.includes(33)) return { ok: false, reason: 'Needs both arms', tn: 99, mods, dist };
+        if (!shoveHex(st, tgt, pos.f ?? att.f)) return { ok: false, reason: 'Nowhere to push', tn: 99, mods, dist };
+      }
+    }
     tn = att.pilot.pil; mods.length = 0; mods.push({ label: 'Piloting', v: att.pilot.pil });
     if (opts.kind === 'kick') add('Kick', -2);
+    if (kind === 'hatchet') { add('Hatchet', -1); add('Arm actuators', armMods(att, att.hatchet)); }
+    if (kind === 'push') add('Push', -1);
+    if (kind === 'charge') add(tgt.pilot.pil < att.pilot.pil ? 'Their pilot is better' : 'Your pilot is better', att.pilot.pil - (tgt.pilot.pil ?? att.pilot.pil));
     if (hasAbility(att, 'melee')) add('Melee Specialist', -1);
     if (opts.kind === 'punch') {
       const arm = bestPunchArm(att);
@@ -429,6 +456,24 @@ export function toHit(st, att, tgt, w, opts = {}) {
   return { ok: true, tn, p: chance(tn), mods: mods.filter((m) => m.label), dist, los };
 }
 
+// Why a mech can't swing its hatchet right now ('' if it can)
+export function hatchetProblem(m) {
+  const arm = m.hatchet;
+  if (arm === undefined) return 'No hatchet';
+  const base = arm === 4 ? 29 : 33;
+  if (m.locGone[arm]) return 'Hatchet arm destroyed';
+  if (m.actu.includes(base) || m.actu.includes(base + 3)) return 'Hatchet arm disabled';
+  return '';
+}
+// Where a mech shoved in direction f ends up, or null if it can't be moved that way: off
+// the map, into something, or up a slope steeper than it could climb.
+export function shoveHex(st, tgt, f) {
+  const n = neighbor(tgt.x, tgt.y, f);
+  if (!inMap(st.map, n.x, n.y) || mechAt(st, n.x, n.y) || structureAt(st, n.x, n.y) || unitAt(st, n.x, n.y)) return null;
+  const drop = elevOf(st, tgt.x, tgt.y) - elevOf(st, n.x, n.y);
+  if (drop < -1) return null;
+  return { x: n.x, y: n.y, drop };
+}
 function bestPunchArm(m) {
   let best = -1, bm = 99;
   if (bodyOf(m) === 'quad') return -1;
@@ -508,6 +553,15 @@ export function checkVictory(st, ev) {
     if (!alive[1]) return setWinner(st, ev, 0, 'The blocking force was destroyed.');
     return;
   }
+  if (mis.convoy) {
+    const c = convoyCount(st);
+    if (c.out >= mis.convoy.need) return setWinner(st, ev, mis.convoy.team, `${c.out} supply haulers got through.`);
+    if (c.n - c.lost < mis.convoy.need) return setWinner(st, ev, 1 - mis.convoy.team, 'The convoy was stopped.');
+  }
+  if (mis.fort) {
+    const s = objectiveStructure(st);
+    if (s && s.dead) return setWinner(st, ev, 1 - mis.fort.team, 'The command post was destroyed.');
+  }
   if (nAlive <= 1) {
     const s = alive.indexOf(true);
     if (s < 0) return setWinner(st, ev, -1, 'Mutual destruction.');
@@ -521,7 +575,7 @@ export function checkVictory(st, ev) {
 export const ROUND_LIMITS = ['standard', 'long', 'none'];
 export function maxRounds(st) {
   const mis = missionOf(st);
-  if (mis.id === 'hold' || !st.roundLimit || st.roundLimit === 'standard') return mis.rounds;
+  if (mis.id === 'hold' || mis.id === 'defend' || !st.roundLimit || st.roundLimit === 'standard') return mis.rounds;
   return st.roundLimit === 'long' ? Math.round(mis.rounds * 1.5) : 0;
 }
 function roundLimit(st, ev) {
@@ -531,6 +585,7 @@ function roundLimit(st, ev) {
   const byId = {
     hold: [0, 'The position held for 500 seconds.'], datapack: [1, 'The datapack was never recovered.'],
     pepsi: [1, 'The Pepsi never arrived.'], scout: [1, 'The scouts never returned.'],
+    base: [1, 'The command post held.'], defend: [0, 'The command post held until relief arrived.'], convoy: [1, 'The convoy never got through.'],
     crossing: [1, 'The crossing failed.'], memcell: [-1, 'Time ran out.'], spy: [-1, 'The spy slipped away into the hills.'],
   };
   if (byId[mis.id]) { setWinner(st, ev, byId[mis.id][0], byId[mis.id][1]); return true; }
@@ -761,7 +816,7 @@ export function applyCommand(st, side, cmd) {
     }
     case 'melee': {
       if (act.phase === 'done') return fail('Already attacked');
-      if (!['punch', 'kick', 'dfa'].includes(cmd.kind)) return fail('Unknown attack');
+      if (!MELEE_KINDS.includes(cmd.kind)) return fail('Unknown attack');
       const tgt = st.mechs[cmd.target];
       const th = tgt && toHit(st, m, tgt, null, { kind: cmd.kind });
       if (!th || !th.ok) return fail(th ? th.reason : 'Bad target');
@@ -935,8 +990,71 @@ function deathFromAbove(st, m, tgt, th, ev) {
   }
 }
 
+// Every physical attack, in the order the battle screen lists them
+export const MELEE_KINDS = ['punch', 'kick', 'hatchet', 'charge', 'push', 'dfa'];
+// What an attack does to the target if it lands (a push does none)
+export function meleeDamage(m, kind) {
+  const sp = hasAbility(m, 'melee') ? 1 : 0;
+  if (kind === 'dfa') return dfaDamage(m);
+  if (kind === 'push') return 0;
+  if (kind === 'charge') return Math.ceil(m.tons / 10) * Math.max(1, m.lastMove.hexes) + sp;
+  if (kind === 'kick' || kind === 'hatchet') return Math.ceil(m.tons / 5) + sp;
+  const arm = bestPunchArm(m);
+  return Math.max(1, Math.floor(Math.ceil(m.tons / 10) / (1 + actuCount(m, arm === 4 ? [30, 31] : [34, 35])))) + sp;
+}
+export const chargeSelfDamage = (tgt) => Math.ceil(tgt.tons / 10);
+
+// Knock a mech one hex in direction f (after a charge or a push). Going over a drop of two
+// levels or more is a fall from that height.
+function shove(st, tgt, f, ev) {
+  const to = shoveHex(st, tgt, f);
+  if (!to) return false;
+  const from = { x: tgt.x, y: tgt.y };
+  tgt.x = to.x; tgt.y = to.y;
+  if (st.item && st.item.carrier === tgt.id) { st.item.x = tgt.x; st.item.y = tgt.y; }
+  ev.push({ k: 'shove', id: tgt.id, from, x: to.x, y: to.y });
+  if (to.drop >= 2) { log(st, ev, `${tgt.design} goes over the edge!`, { id: tgt.id, side: tgt.side, tone: 'bad' }); fall(st, tgt, ev, 'pushed off a ledge', to.drop); }
+  else if ((TERRAIN[tileOf(st, to.x, to.y)].depth || 0) && !magma(st)) pilotingCheck(st, tgt, 0, 'shoved into water', ev);
+  return true;
+}
+
+// Charge (Total Warfare): a mech that walked or ran rams the mech straight ahead. The target
+// takes a tenth of the attacker's tonnage for every hex it moved, the attacker a tenth of
+// the target's tonnage; the target is knocked back a hex and both must keep their feet.
+function charge(st, m, tgt, th, ev) {
+  m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
+  const r = roll2d6(st);
+  const hit = r >= th.tn;
+  const dmg = meleeDamage(m, 'charge');
+  ev.push({ k: 'melee', id: m.id, target: tgt.id, kind: 'charge', hit, tn: th.tn, roll: r, dmg: hit ? dmg : 0, loc: -1 });
+  if (!hit) { log(st, ev, `${m.design} charges ${tgt.design} and misses.`, { id: m.id, side: m.side, tone: 'miss' }); return; }
+  const dir = attackDirection(st, m.x, m.y, tgt);
+  log(st, ev, `${m.design} CHARGES ${tgt.design} for ${dmg} damage!`, { id: m.id, side: m.side, tone: 'hit' });
+  groupDamage(st, tgt, dmg, () => rollLocation(st, dir, tgt).loc, dir === 'B', ev, m);
+  const back = chargeSelfDamage(tgt);
+  log(st, ev, `${m.design} takes ${back} damage from the collision.`, { id: m.id, side: m.side });
+  groupDamage(st, m, back, () => rollLocation(st, 'F', m).loc, false, ev, null);
+  if (!tgt.dead) { shove(st, tgt, m.f, ev); if (!tgt.dead) pilotingCheck(st, tgt, 2, 'charged', ev); }
+  if (!m.dead) pilotingCheck(st, m, 2, 'charging', ev);
+}
+
+// Push: both arms shove the mech straight ahead back a hex. No damage, but it has to keep
+// its balance, and whatever is behind it is its problem.
+function push(st, m, tgt, th, ev) {
+  m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
+  const r = roll2d6(st);
+  const hit = r >= th.tn;
+  ev.push({ k: 'melee', id: m.id, target: tgt.id, kind: 'push', hit, tn: th.tn, roll: r, dmg: 0, loc: -1 });
+  if (!hit) { log(st, ev, `${m.design} fails to push ${tgt.design}.`, { id: m.id, side: m.side, tone: 'miss' }); return; }
+  log(st, ev, `${m.design} shoves ${tgt.design} back!`, { id: m.id, side: m.side, tone: 'hit' });
+  shove(st, tgt, m.f, ev);
+  if (!tgt.dead) pilotingCheck(st, tgt, 0, 'pushed', ev);
+}
+
 function physical(st, m, tgt, kind, th, ev) {
   if (kind === 'dfa') { deathFromAbove(st, m, tgt, th, ev); return; }
+  if (kind === 'charge') { charge(st, m, tgt, th, ev); return; }
+  if (kind === 'push') { push(st, m, tgt, th, ev); return; }
   m.reveal = { r: st.round, t: tgt.team ?? tgt.side };
   const r = roll2d6(st);
   const hit = r >= th.tn;
@@ -948,13 +1066,16 @@ function physical(st, m, tgt, kind, th, ev) {
     const ah = actuCount(m, arm === 4 ? [30, 31] : [34, 35]);
     dmg = Math.max(1, Math.floor(dmg / (1 + ah))) + (hasAbility(m, 'melee') ? 1 : 0);
     loc = punchLoc(st, dir);
+  } else if (kind === 'hatchet') {
+    dmg = meleeDamage(m, 'hatchet');
+    loc = rollLocation(st, dir, tgt).loc;
   } else {
     dmg = Math.ceil(m.tons / 5) + (hasAbility(m, 'melee') ? 1 : 0);
     loc = kickLoc(st, tgt, dir);
   }
   ev.push({ k: 'melee', id: m.id, target: tgt.id, kind, hit, tn: th.tn, roll: r, dmg, loc });
   if (hit) {
-    log(st, ev, `${m.design} ${kind === 'punch' ? 'punches' : 'kicks'} ${tgt.design} for ${dmg} damage!`, { id: m.id, side: m.side, tone: 'hit' });
+    log(st, ev, `${m.design} ${kind === 'punch' ? 'punches' : kind === 'hatchet' ? 'buries its hatchet in' : 'kicks'} ${tgt.design} for ${dmg} damage!`, { id: m.id, side: m.side, tone: 'hit' });
     applyDamage(st, tgt, loc, rear, dmg, ev, m);
     if (loc === 0 && !tgt.dead) pilotHit(st, tgt, 1, ev, 'head hit');
     if (kind === 'kick' && !tgt.dead) pilotingCheck(st, tgt, 0, 'kicked', ev);

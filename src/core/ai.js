@@ -1,5 +1,6 @@
 // Computer opponent. Returns one command at a time for the active AI side.
-import { maxRounds } from './rules.js';
+import { maxRounds, objectiveStructure, convoyUnits, meleeDamage, chargeSelfDamage, shoveHex, hatchetProblem, MELEE_KINDS } from './rules.js';
+import { neighbor } from './hex.js';
 import { WEAPONS, TERRAIN } from './data.js';
 import { computeReach, canEndAt, toHit, availableMechs, operational, canAct, lineOfSight, inArc, missionOf,
   expectedDamage, dissipation, totalArmor, maxArmor, tileOf, toHitUnit, activeSide, moveModes, moveKind, availMP, canConvert, MOVE_HEAT, visibleTo, toHitStructure, envHeat, smokeAt, isBurning, defenceTargets, dfaDamage, dfaSelfDamage, pilotingMods, elevOf } from './rules.js';
@@ -44,6 +45,23 @@ function goalFor(st, m) {
       const c = st.mechs[it.carrier];
       if (c && c.team !== m.team) return { x: c.x, y: c.y, weight: 1.5, hunt: c.id };
       if (c && c.team === m.team) return { x: c.x, y: c.y, weight: 0.6 };
+    }
+  }
+  // a command post to knock down or stand guard over
+  if (mis.fort) {
+    const s = objectiveStructure(st);
+    if (s && !s.dead) return m.team === mis.fort.team ? { x: s.x, y: s.y, weight: 0.5, range: 4 } : { x: s.x, y: s.y, weight: 1.6, range: 3 };
+  }
+  // a convoy: the escort stays just ahead of the lead hauler, the raiders go for the nearest one
+  if (mis.convoy) {
+    const live = convoyUnits(st).filter((u) => !u.dead && !u.immobile);
+    if (live.length) {
+      if (m.team === mis.convoy.team) {
+        const lead = live.reduce((a, b) => (b.x > a.x ? b : a));
+        return { x: Math.min(w - 2, lead.x + 2), y: lead.y, weight: 0.6, range: 3 };
+      }
+      const near = live.reduce((a, b) => (distance(m.x, m.y, b.x, b.y) < distance(m.x, m.y, a.x, a.y) ? b : a));
+      return { x: near.x, y: near.y, weight: 1.5, range: 3 };
     }
   }
   if (mis.scout && m.team === 0) {
@@ -108,6 +126,17 @@ function evalPositions(st, m) {
     if (!fortInfo.has(key)) fortInfo.set(key, armedForts.map((s) => ({ s, los: lineOfSight(st, s.x, s.y, x, y), d: distance(x, y, s.x, s.y) })));
     return fortInfo.get(key);
   };
+  // mission targets that aren't mechs: the enemy command post, or the convoy's haulers
+  const mis = missionOf(st);
+  const prizes = [];
+  if (mis.fort && m.team !== mis.fort.team) { const s = objectiveStructure(st); if (s && !s.dead) prizes.push({ x: s.x, y: s.y, mod: -4 }); }
+  if (mis.convoy && m.team !== mis.convoy.team) for (const u of convoyUnits(st)) if (!u.dead && !u.immobile && (!st.fog || visibleTo(st, m.team, u))) prizes.push({ x: u.x, y: u.y, mod: 1 });
+  const prizeInfo = new Map();
+  const prizeAt = (x, y) => {
+    const key = y * w + x;
+    if (!prizeInfo.has(key)) prizeInfo.set(key, prizes.map((p) => ({ p, los: lineOfSight(st, x, y, p.x, p.y), d: distance(x, y, p.x, p.y) })));
+    return prizeInfo.get(key);
+  };
   const best = { score: -1e9, cmd: null };
   const fragile = totalArmor(m) / maxArmor(m);
   // QuadVees also weigh converting: vehicle mode makes no movement heat and can't fall,
@@ -162,6 +191,21 @@ function evalPositions(st, m) {
             const dfaVal = p * dmg * (totalArmor(e) < dmg * 2.5 ? 1.6 : 1) - p * dfaSelfDamage(m) * 0.25 - (1 - p) * dmg * 0.35;
             offense = Math.max(offense, dfaVal);
           }
+          // up close, a kick (or a hatchet) may beat the guns
+          if (it.d === 1 && !e.hidden && mode !== 'jump' && Math.abs(relBearing(x, y, f, e.x, e.y)) <= 60.01 && Math.abs(elevOf(st, e.x, e.y) - elevOf(st, x, y)) <= 1) {
+            const base = m.pilot.pil + atkMod + moveModE(e) + (e.prone ? -3 : 0) + (e.shutdown || e.pilot.ko ? -4 : 0);
+            const big = Math.ceil(m.tons / 5);
+            const mv = Math.max(chance(base - 2) * big * 0.85, m.hatchet !== undefined && !hatchetProblem(m) ? chance(base - 1) * big : 0);
+            offense = Math.max(offense, mv * (totalArmor(e) < big * 2.5 ? 1.5 : 1));
+          }
+          if ((mode === 'walk' || mode === 'run') && !stand && hexes >= 2 && it.d === 1 && !e.hidden && !e.prone && m.tons >= e.tons) {
+            const ah = neighbor(x, y, f);
+            if (ah.x === e.x && ah.y === e.y && Math.abs(elevOf(st, e.x, e.y) - elevOf(st, x, y)) <= 1) {
+              const p = chance(m.pilot.pil + (m.pilot.pil - e.pilot.pil) + atkMod + moveModE(e));
+              const dmg = Math.ceil(m.tons / 10) * hexes;
+              offense = Math.max(offense, (p * dmg * (totalArmor(e) < dmg * 2.5 ? 1.5 : 1) - p * (chargeSelfDamage(e) * 0.5 + 2)) * 0.8);
+            }
+          }
           if (opts.length) {
             const v = bestVolley(opts, heatBudget(st, m, mvHeat));
             // close in on the enemy closest to falling, so the lance converges on one target
@@ -203,14 +247,24 @@ function evalPositions(st, m) {
             if (opts.length) offense = Math.max(offense, bestVolley(opts, heatBudget(st, m, mvHeat)).dmg * 0.55);
           }
         }
+        for (const pi of prizes.length ? prizeAt(x, y) : []) {
+          if (!pi.los.ok || pi.d < 1) continue;
+          const opts = [];
+          for (const wp of m.weapons) if (wp.ok && wp.ammo !== 0 && pi.d <= wp.rng && inArc(m, wp.loc, pi.p.x, pi.p.y, { x, y, f })) {
+            const s2 = Math.ceil(wp.rng / 3), mr = Math.ceil(wp.rng * 2 / 3);
+            const p = chance(m.pilot.gun + (pi.d <= s2 ? 0 : pi.d <= mr ? 2 : 4) + atkMod + pi.p.mod + pi.los.woods + (wp.minr && pi.d <= wp.minr ? wp.minr - pi.d + 1 : 0));
+            if (p > 0) opts.push({ w: wp, ed: expectedDamage(wp, p), heat: wp.heat });
+          }
+          if (opts.length) offense = Math.max(offense, bestVolley(opts, heatBudget(st, m, mvHeat)).dmg * 1.3);
+        }
         // the ground itself: fire, magma, climate
         const envH = envHeat(st, { ...m, x, y });
         // caution falls as the clock runs down, so battles end with a decision
         let score = offense * 1.2 - threat * (0.35 + (1 - fragile) * 0.5) * L.caution * (1 - pressure * 0.5) + convBias - Math.max(0, envH) * 1.6 - (isBurning(st, x, y) ? 4 : 0);
         if (goal) {
-          const gd = goal.edge ? (goal.edge === 'E' ? w - 1 - x : x) : distance(x, y, goal.x, goal.y);
+          const gd = goal.edge ? (goal.edge === 'E' ? w - 1 - x : x) : Math.max(0, distance(x, y, goal.x, goal.y) - (goal.range || 0));
           score -= gd * goal.weight;
-          if (gd === 0) score += 30;
+          if (gd === 0 && !goal.range) score += 30;
         } else if (enemies.length) {
           let nd = 99;
           for (const it of info) nd = Math.min(nd, it.d);
@@ -261,12 +315,15 @@ function chooseAttack(st, m) {
       if (v.picked.length) cands.push({ v: val, cmd: { type: 'attack', id: m.id, target: e.id, weapons: v.picked.map((o) => o.w.i) } });
       if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, target: e.id, weapons: v.picked.map((o) => o.w.i) } };
     }
-    for (const kind of ['kick', 'punch', 'dfa']) {
+    for (const kind of MELEE_KINDS) {
       const th = toHit(st, m, e, null, { kind });
       if (!th.ok) continue;
-      const dmg = kind === 'dfa' ? dfaDamage(m) : kind === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10);
-      // death from above hurts the attacker too: its legs on a hit, a nasty fall on a miss
-      const risk = kind === 'dfa' ? th.p * dfaSelfDamage(m) * 0.25 + (1 - th.p) * dmg * 0.35 : 0;
+      let dmg = meleeDamage(m, kind);
+      // a push is only worth it for what's behind the target: a long drop, or at least water
+      if (kind === 'push') { const to = shoveHex(st, e, m.f); dmg = to.drop >= 2 ? Math.ceil(e.tons / 10) * (to.drop + 1) + 3 : (TERRAIN[tileOf(st, to.x, to.y)].depth ? 4 : 2); }
+      // death from above hurts the attacker too: its legs on a hit, a nasty fall on a miss.
+      // A charge costs armour as well, and both mechs may go down
+      const risk = kind === 'dfa' ? th.p * dfaSelfDamage(m) * 0.25 + (1 - th.p) * dmg * 0.35 : kind === 'charge' ? th.p * (chargeSelfDamage(e) * 0.5 + 2) : 0;
       // the same focus-fire pull as shooting, so a pilot doesn't shoot a wreck it could stamp on
       const focusM = 1 + (1 - totalArmor(e) / maxArmor(e)) * L.focus * 1.6;
       const val = th.p * dmg * (kind === 'kick' ? 0.85 : 1) * (kind === 'dfa' && totalArmor(e) < dmg * 2.5 ? 1.6 : 1) * focusM - risk;
@@ -275,7 +332,7 @@ function chooseAttack(st, m) {
   }
   // infantry and vehicles shooting at us: worth a volley when no mech is a better target
   for (const u of (st.units || [])) {
-    if (u.dead || u.hidden || u.x < 0 || u.team === m.team) continue;
+    if (u.dead || u.hidden || u.x < 0 || u.team === m.team || (u.convoy && u.immobile)) continue;
     if (st.fog && !visibleTo(st, m.team ?? m.side, u)) continue;
     const opts = [];
     for (const wp of m.weapons) {
@@ -290,7 +347,8 @@ function chooseAttack(st, m) {
     const v = bestVolley(opts, budget);
     const left = u.inf ? u.troops : u.armor + u.struct;
     const threat = u.weapons.some((w) => w.ok && w.ammo !== 0) && distance(m.x, m.y, u.x, u.y) <= Math.max(...u.weapons.map((w) => w.rng)) + 2;
-    const val = (u.inf ? v.dmg / left * 25 : v.dmg) * (threat ? 0.7 : 0.35) * (left <= v.dmg * 1.3 ? 1.5 : 1);
+    // a convoy's haulers are the whole point of the mission
+    const val = (u.inf ? v.dmg / left * 25 : v.dmg) * (u.convoy ? 1.5 : threat ? 0.7 : 0.35) * (left <= v.dmg * 1.3 ? 1.5 : 1);
     if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, unit: u.id, weapons: v.picked.map((o) => o.w.i) } };
   }
   // enemy emplacements: worth a volley when no mech is a better target
@@ -301,7 +359,7 @@ function chooseAttack(st, m) {
     if (!opts.length) continue;
     const v = bestVolley(opts, budget);
     const armed = s.team >= 0 && s.weapons.some((w) => w.ok && w.ammo !== 0);
-    const val = v.dmg * (armed ? (s.cf <= v.dmg * 1.5 ? 0.9 : 0.6) : 0.15);
+    const val = v.dmg * (s.obj ? 1.3 : armed ? (s.cf <= v.dmg * 1.5 ? 0.9 : 0.6) : 0.15);
     if (v.picked.length && val > best.v) best = { v: val, cmd: { type: 'attack', id: m.id, structure: s.id, weapons: v.picked.map((o) => o.w.i) } };
   }
   // green pilots don't always pick the best shot

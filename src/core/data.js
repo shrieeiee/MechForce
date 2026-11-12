@@ -1,8 +1,8 @@
 import { MECHS as DISK_MECHS } from './mechdata.js';
 import { EXTRA_MECHS } from './extradata.js';
 
-export const VERSION = '1.14.0';
-export const PROTOCOL = 10;
+export const VERSION = '1.15.0';
+export const PROTOCOL = 11;
 
 // Weapon types, in the original program's order.
 // kind: b=ballistic, m=missile, e=energy. n = missiles per volley. snd = sound family
@@ -99,6 +99,8 @@ export const STRUCTS = {
   bunker: { name: 'Bunker', cf: 90, h: 1, slots: 2, hard: true, burns: false },
   building: { name: 'Building', cf: 60, h: 2, slots: 0, hard: false, burns: true },
   wall: { name: 'Wall', cf: 30, h: 1, slots: 0, hard: true, burns: false },
+  // a side's headquarters: the objective of the base missions, and it belongs to a team
+  hq: { name: 'Command post', cf: 180, h: 2, slots: 0, hard: true, burns: false, obj: true },
 };
 export const STRUCT_KINDS = Object.keys(STRUCTS);
 // Weapon fits for emplacements and bunkers (weapon type indexes, see WEAPONS)
@@ -128,6 +130,7 @@ export const UNITS = {
   ltank: { name: 'Light tank', tons: 30, mp: 5, motion: 'tracked', armor: 64, struct: 15, w: [11, 13] },
   tank: { name: 'Battle tank', tons: 50, mp: 4, motion: 'tracked', armor: 104, struct: 25, w: [2, 4] },
   carrier: { name: 'Missile carrier', tons: 40, mp: 4, motion: 'wheeled', armor: 56, struct: 20, w: [8] },
+  truck: { name: 'Supply hauler', tons: 40, mp: 4, motion: 'tracked', armor: 100, struct: 30, w: [], sturdy: true },
 };
 export const UNIT_KINDS = Object.keys(UNITS);
 export const UNIT_GUNNERY = 4;
@@ -171,6 +174,10 @@ export const SIDE_NAMES = ['Blue Force', 'Red Force', 'Green Force', 'Gold Force
 
 export const PILOT_NAMES = ['Hawk', 'Viper', 'Tex', 'Ghost', 'Mako', 'Rook', 'Jinx', 'Bishop', 'Kestrel', 'Nova', 'Ronin',
   'Sable', 'Duke', 'Flint', 'Echo', 'Moss', 'Rivet', 'Banjo', 'Torch', 'Pike', 'Wren', 'Quill', 'Brick', 'Zero'];
+
+// Designs that carry a melee weapon in one arm (4 left, 5 right). A hatchet swings for a
+// fifth of the mech's tonnage, twice a punch.
+export const MELEE_WEAPONS = { Hatchetman: { name: 'Hatchet', arm: 5 } };
 
 // Missions. Side 0 starts in the west, side 1 in the east. Briefings are the original text from the Orders drawer.
 export const MISSIONS = [
@@ -221,6 +228,25 @@ export const MISSIONS = [
     goal: ['Scout deep into the EAST third, then bring a scout back off the WEST edge.', 'Destroy the scouts before they get home.'],
     brief: ['You are ordered to assemble a scouting team to scout the enemy territory before our major offensive. It is vital that you obtain information on enemy strength in the area and return with the data. Your team must scout at least half way through the area or as far as necessary to identify ALL enemy mechs. At least one mech must return with the intelligence data on the enemy mechs.',
       'Intelligence reports that the enemy is preparing for a major offensive. We expect them to scout our position prior to the assault. Your unit is ordered to intercept this scouting team and destroy them. The enemy mechs must not be allowed to return with intelligence data on our position. ALL enemy mechs must be captured or destroyed.'],
+  },
+  // ---- missions written for the remake: fortifications and conventional forces as objectives
+  {
+    id: 'base', name: 'Base Assault', sides: [2, 4], rounds: 18, fort: { team: 1, turrets: 2, bunker: true, cf: 260 },
+    goal: ['Destroy the enemy command post in the EAST.', 'Keep your command post standing until time runs out.'],
+    brief: ['Recon has found the enemy\'s forward command post, dug in behind gun emplacements. You are ordered to assemble a strike force and level it. The garrison is a distraction: the mission is the command post. Bring it down and their whole front loses its eyes.',
+      'An enemy strike force is heading for your command post. You are ordered to hold the base. The emplacements will fight alongside you. Lose the command post and the front collapses, so nothing else matters. Hold until the relief column arrives.'],
+  },
+  {
+    id: 'defend', name: 'Defend the Base', sides: [2, 4], rounds: 12, fort: { team: 0, turrets: 1, cf: 290 },
+    goal: ['Keep your command post standing for 600 seconds (12 rounds).', 'Destroy the enemy command post in the WEST before time runs out.'],
+    brief: ['The enemy has slipped a raiding force past the lines and it is heading straight for your command post. You have one gun emplacement and whatever mechs you can scramble. Reinforcements are 600 seconds out. Keep the command post standing until they arrive.',
+      'Our raiders have found a gap in the lines. The enemy command post is lightly held, but their reinforcements will arrive in 600 seconds. You are ordered to race in and destroy the command post before they do. Ignore everything else.'],
+  },
+  {
+    id: 'convoy', name: 'Convoy Escort', sides: [2, 4], rounds: 16, convoy: { team: 0, n: 3, need: 2 }, exitEdge: ['E', null],
+    goal: ['Get at least 2 of the 3 supply haulers off the EAST edge.', 'Stop the convoy: destroy or cripple 2 of the 3 supply haulers.'],
+    brief: ['The garrison to the east is down to its last rounds. Three supply haulers are ready to roll and you are ordered to see them through. They are slow, unarmed and will drive east whatever happens. At least two must arrive. Stay ahead of them and keep the enemy off the road.',
+      'An enemy supply convoy is running east to relieve their garrison. Three haulers, escorted by mechs. You are ordered to stop it. Wreck the haulers or shoot out their tracks: if two fail to arrive the garrison falls. The escort is not the target.'],
   },
 ];
 

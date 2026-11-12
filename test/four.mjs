@@ -10,7 +10,7 @@ const connect = (name, extra) => new Promise((res) => {
   const ws = new WebSocket('ws://127.0.0.1:7398/ws');
   const c = { name, ws, msgs: [], acted: 0 };
   ws.on('message', (d) => { const m = JSON.parse(d); c.msgs.push(m); if (m.t === 'welcome') c.id = m.id; if (m.t === 'lobby') c.lobby = m.lobby; if (m.t === 'start' || m.t === 'update') { if (m.patch !== undefined) { if (m.base !== c.vseq) { c.desync = (c.desync || 0) + 1; return; } c.state = m.patch ? patch(c.state, m.patch) : c.state; } else c.state = m.state; c.vseq = m.vseq; c.onState && c.onState(); } });
-  ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', name, platform: name, protocol: 10, ...extra })); setTimeout(() => res(c), 250); });
+  ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', name, platform: name, protocol: 11, ...extra })); setTimeout(() => res(c), 250); });
 });
 const host = await connect('Deck', { create: true });
 host.ws.send(JSON.stringify({ t: 'settings', settings: { mission: 'crossing', sides: 4, mapSize: 'M', lanceSize: 2, tonnage: 160 } }));

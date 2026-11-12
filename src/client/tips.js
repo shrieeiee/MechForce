@@ -120,6 +120,10 @@ const MOD_EXPLAIN = {
   'Sensors damaged': 'Your sensors are hit, so your targeting is degraded.',
   'You are prone': 'You are lying on the ground, which spoils your aim.',
   'Kick': 'Kicks are easier to land than punches.',
+  'Hatchet': 'A hatchet is easier to land than a punch.',
+  'Push': 'A shove is easier to land than a punch.',
+  'Their pilot is better': 'Charges compare piloting skills: the better pilot gets out of the way.',
+  'Your pilot is better': 'Charges compare piloting skills: your better pilot lines the ram up.',
 };
 export function modLine(m) {
   const sign = m.v > 0 ? '+' + m.v : String(m.v);
@@ -272,6 +276,7 @@ export const MANUAL = [
     <p>Lines of sight are blocked by higher hills, or by three points of woods in between.</p>
     <p>Next to an enemy you can <b>punch</b> or <b>kick</b> instead. Kicks hit hard and can knock the target over, but a missed kick may topple you.</p>
     <p><b>Death from above</b>: jump next to an enemy, then press Melee to come down on top of it. It does three times a punch's damage to the upper body and can knock the target over, but your own legs take a kick's worth of damage, and if you miss you crash to the ground hard. You can't land on a mech standing on higher ground.</p>
+    <p><b>Charge</b>: walk or run so you finish facing an enemy in the hex straight ahead, then press Melee. It takes a tenth of your tonnage for <b>every hex you moved</b>, you take a tenth of its tonnage back, it is knocked back a hex and both mechs roll (+2) to stay up. A long run-up in a heavy mech is the hardest single hit in the game. <b>Push</b>: shove the mech straight ahead back a hex with both arms. No damage, but it must roll to stay standing, and going off a ledge of two levels or more is a fall. The <b>Hatchetman</b> carries a <b>hatchet</b>: double a punch's damage in one blow anywhere on the target, at -1 to hit, and no heat.</p>
     <p><b>Exploding mechs</b>: when an engine is destroyed, the reactor can lose containment (10+ on two dice) and blow apart, hitting everything within 2 hexes (half damage at 2) — engine rating ÷ 10, up to 40. A mech torn apart by its own ammo sprays its neighbours too. Blasts can knock mechs over, set woods alight and flatten structures; chain reactions happen.</p>` },
   { k: 'heat', t: 'Heat', body: `
     <p>Every mech has a heat scale. Moving and firing add heat; heat sinks remove it at the end of each activation.</p>
@@ -319,6 +324,10 @@ export const MANUAL = [
     <p>A side's troops support its mechs. <b>Local forces</b> belong to no one: they guard their post and fire on any mech that comes within six hexes of it — and on other sides' troops that get too close.</p>
     <p>You can shoot them like any target. Infantry are +1 to hit, and BattleMech weapons are clumsy against them: lasers and cannon kill only damage ÷ 10 troopers, missiles ÷ 5, while <b>machine guns</b> (2D6) and <b>flamers</b> (3D6) mow them down. Twice as many fall when caught in the open. A platoon's firepower shrinks with its numbers.</p>
     <p>Vehicles have armour and internal structure. Any hit can damage the motive system — hovercraft and wheels are the most fragile — slowing them or stopping them dead (immobile targets are -4 to hit, and a stranded hovercraft on water sinks). They block movement like mechs, and reactor blasts and fire hurt them too.</p>` },
+  { k: 'missions', t: 'Base & convoy missions', body: `
+    <p><b>Base Assault</b> and <b>Defend the Base</b> are fought over a <b>command post</b>: a big hardened building (half damage from everything) guarded by emplacements. The attacker wins the moment it falls; the defender wins by keeping it up until the clock runs out, or by wrecking the attackers. Its condition is shown under the objective. In Base Assault the base is in the east and well dug in; in Defend the Base it is yours, in the west, with one turret and less time.</p>
+    <p><b>Convoy Escort</b>: three unarmed <b>supply haulers</b> start in the west and drive east at the end of every round, whatever happens. The escort wins when two get off the east edge; the ambushers win by destroying or immobilising two. Haulers are tough and their tracks are hard to hit, so they take real firepower to stop. They can't drive through mechs, so don't park in the road.</p>
+    <p>All three turn up as campaign contracts, and you can build your own in the map editor: place a <b>Command post</b> and give it an owner.</p>` },
   { k: 'terrain', t: 'Fire, smoke & climate', body: `
     <p><b>Fire.</b> Flamers set woods alight easily, plasma weapons sometimes, and a stray laser or an exploding mech can too. Fires spread downwind at the end of each round, burn heavy woods down to light woods and then to rough ground, and set buildings ablaze. Standing in a burning hex adds <b>+5 heat</b>.</p>
     <p><b>Smoke</b> drifts from fires and blocks sight like woods: +1 or +2 to hit through it.</p>
@@ -354,12 +363,13 @@ export { chance };
 export function structTip(S) {
   const K = STRUCTS[S.kind];
   const guns = S.load && S.load.length ? S.load.map((l) => LOADOUTS[l] ? LOADOUTS[l].name : l).join(' and ') : '';
-  return `<p>${esc(K.name)}${guns ? ' armed with ' + esc(guns) + '. It fires at the end of every round at the best enemy it can see.' : '. Unarmed cover that blocks movement and sight.'}</p>`
+  return `<p>${esc(K.name)}${guns ? ' armed with ' + esc(guns) + '. It fires at the end of every round at the best enemy it can see.' : K.obj ? '. A side\'s headquarters: in the base missions, destroying it wins the battle.' : '. Unarmed cover that blocks movement and sight.'}</p>`
     + `<p>Construction factor ${S.cf} of ${S.cfMax}.${S.hard ? ' Hardened: takes half damage.' : ''}${K.burns ? ' Can catch fire.' : ''} Immobile: -4 to hit.</p>`;
 }
 
 export function forceTip(U) {
   const K = UNITS[U.kind];
+  if (U.convoy || U.kind === 'truck') return `<p>${esc(K.name)} (${esc(MOTION_NAMES[U.motion].toLowerCase())}). Unarmed. ${U.convoy ? 'Part of the convoy: it drives for the east edge at the end of every round and leaves the battlefield when it gets there.' : ''}</p><p>Armour ${U.armor ?? K.armor}/${U.armorMax ?? K.armor}, structure ${U.struct ?? K.struct}/${U.structMax ?? K.struct}. Built to keep rolling: hits rarely damage its tracks, but a hauler that is stopped dead counts as lost.</p>`;
   const who = U.team < 0 ? 'Local forces: they defend their ground against any mech that comes within six hexes of their post.' : 'Fights for its side, run by the computer.';
   return `<p>${esc(K.name)} (${esc(MOTION_NAMES[U.motion].toLowerCase())}). ${who} Moves and fires at the end of each round.</p>`
     + (U.inf ? `<p>${U.troops} of ${U.troopsMax} troopers. +1 to hit. Mech weapons are clumsy against infantry: lasers and cannon kill only damage ÷ 10 troopers, missiles ÷ 5, but <b>machine guns</b> (2D6) and <b>flamers</b> (3D6) mow them down. Twice as many fall when they're caught in the open.</p>`

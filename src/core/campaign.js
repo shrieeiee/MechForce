@@ -89,6 +89,7 @@ const WORLDS = ['Kessel Reach', 'Tamar Deep', 'Nova Arcadia', 'Haldane', 'Ostrav
 const MISSION_TEXT = {
   generic: 'Destroy the enemy lance.', datapack: 'Recover a data core from the battlefield.', crossing: 'Break through to the far edge.',
   hold: 'Hold a position until relieved.', scout: 'Scout the enemy deployment and get the data out.', pepsi: 'Escort a supply drop across the field.',
+  base: 'Storm a fortified command post.', defend: 'Hold a command post against raiders.', convoy: 'Escort supply haulers across the field.',
 };
 export const DIFFICULTY = ['Routine', 'Standard', 'Dangerous', 'Deadly'];
 export function companyStrength(co) {

@@ -38,7 +38,7 @@ Design custom mechs (title screen → Mech Lab, or the ★ Custom tab in the Mec
 
 ## Rules in brief
 
-Initiative each round; sides alternate activating one mech at a time. Walk / run / jump with facing and terrain costs (woods, rough, water, elevation). 2d6 to-hit with range, movement, cover, heat and damage modifiers. Hit locations by attack direction (front, sides, rear armour), damage transfer, critical hits from the real crit tables (ammo explosions, engine, gyro, actuators, cockpit, sensors, heat sinks, jump jets), heat with shutdown and ammo cook-off, falls, pilot injuries and consciousness rolls, punches, kicks and **death from above** (jump next to an enemy and land on it: 3× punch damage, your legs take a kick's worth, a miss means a crash). **Exploding mechs**: a destroyed engine can breach (10+) and blast everything within 2 hexes for engine rating ÷ 10 (max 40, half at 2 hexes); a mech destroyed by its own ammo damages its neighbours. Blasts can knock mechs down, start fires and chain. Each round is 50 seconds, as in the original's "500 seconds".
+Initiative each round; sides alternate activating one mech at a time. Walk / run / jump with facing and terrain costs (woods, rough, water, elevation). 2d6 to-hit with range, movement, cover, heat and damage modifiers. Hit locations by attack direction (front, sides, rear armour), damage transfer, critical hits from the real crit tables (ammo explosions, engine, gyro, actuators, cockpit, sensors, heat sinks, jump jets), heat with shutdown and ammo cook-off, falls, pilot injuries and consciousness rolls, punches, kicks, **hatchets** (the Hatchetman: tonnage ÷ 5 anywhere, −1 to hit), **charges** (walk or run into the mech straight ahead: tonnage ÷ 10 per hex moved, you take its tonnage ÷ 10, it's knocked back and both roll to stay up), **pushes** (shove it back a hex, off ledges and into water) and **death from above** (jump next to an enemy and land on it: 3× punch damage, your legs take a kick's worth, a miss means a crash). **Exploding mechs**: a destroyed engine can breach (10+) and blast everything within 2 hexes for engine rating ÷ 10 (max 40, half at 2 hexes); a mech destroyed by its own ammo damages its neighbours. Blasts can knock mechs down, start fires and chain. Each round is 50 seconds, as in the original's "500 seconds".
 
 ## Fog of war
 
@@ -55,6 +55,12 @@ When a mech is destroyed its pilot tries to **eject** (piloting roll — a bad l
 **Map Editor** (main menu) builds your own battlefields: paint clear ground, woods, rough and water, raise and lower hills (levels 0–5), and place **gun emplacements** (one weapon), **bunkers** (two weapons, hardened), **buildings** and **walls**. Choose which side each emplacement fights for and what it mounts (AC/10, AC/20, LRM 20, twin SRM 6, twin large lasers, plasma cannon, machine guns). Mirror mode paints both halves at once — *Rotate* gives a perfectly fair West-vs-East map. Maps are saved on the device and picked under **Map** in the battle setup; the host sends the map to everyone, so they work online too.
 
 Emplacements and bunkers are run by the computer for their side: at the end of every round each one fires at the best enemy it can see (gunnery 4, ammo runs out). Every structure blocks movement and sight, can be shot (immobile, -4 to hit) and collapses into rubble. Random battlefields can be fortified with **Defences: Light/Heavy** in the setup.
+
+## Missions
+
+The eight original 1989 missions plus three written for the remake: **Base Assault** (destroy a command post behind gun emplacements and a bunker), **Defend the Base** (keep yours standing for 12 rounds against raiders) and **Convoy Escort** (see at least two of three supply haulers off the east edge, or stop them). All three appear as campaign contracts, and command posts can be placed in the map editor.
+
+New to the game? **Tutorial** on the title screen is a short guided battle that coaches moving, firing, heat, damage and finishing a kill.
 
 ## Infantry and vehicles
 

@@ -1,3 +1,4 @@
+import { objectiveStatus, MELEE_KINDS, meleeDamage, chargeSelfDamage } from '../core/rules.js';
 import { computeReach, canEndAt, pathFrom, reachKey, toHit, availableMechs, operational, canAct, activeSide, missionOf,
   dissipation, expectedDamage, totalArmor, maxArmor, secondsElapsed, attackDirection,
   moveModes, availMP, canConvert, conversionCost, pilotingMods, isQuadVee, onTracks, MOVE_HEAT,
@@ -96,7 +97,7 @@ export class Battle {
     const st = this.state, mis = missionOf(st), w = st.map.w;
     const edges = [];
     const col = (t) => (st.teams && st.teams[t] ? st.teams[t].color : st.sides[t].color);
-    if (mis.id === 'crossing') edges.push({ x: w - 1, color: col(0) });
+    if (mis.id === 'crossing' || mis.convoy) edges.push({ x: w - 1, color: col(0) });
     if (mis.homeExit) { edges.push({ x: 0, color: col(0) }); if (mis.carriers.includes(1)) edges.push({ x: w - 1, color: col(1) }); }
     if (mis.id === 'pepsi') edges.push({ x: w - 1, color: col(0) }, { x: 0, color: col(1) });
     if (mis.spy) edges.push({ x: w - 1, color: col(1) });
@@ -121,6 +122,7 @@ export class Battle {
 
   onEvent(e) {
     const st = this.state;
+    if (this.app.tutorial) this.app.tutorial.onEvent(e, st);
     if (e.k === 'log') this.pushFeed(e.text, e.tone, e.side);
     if (e.k === 'round') { banner(`Round ${e.n}`, `T+${(e.n - 1) * 50} seconds`); }
     if (e.k === 'defences') banner('Defences open fire', 'Emplacements and bunkers shoot at the end of every round');
@@ -311,7 +313,7 @@ export class Battle {
     const scored = enemies.map((e) => {
       let ed = 0;
       for (const w of m.weapons) { const th = toHit(st, m, e, w); if (th.ok) ed += expectedDamage(w, th.p); }
-      const mth = ['kick', 'punch', 'dfa'].some((kind) => toHit(st, m, e, null, { kind }).ok);
+      const mth = MELEE_KINDS.some((kind) => toHit(st, m, e, null, { kind }).ok);
       return { e, ed, can: ed > 0 || mth, d: distance(m.x, m.y, e.x, e.y) };
     });
     // enemy (and neutral) structures can be shot too; they sort after mechs of equal value
@@ -319,13 +321,13 @@ export class Battle {
       if (S.dead || S.team === (m.team ?? m.side)) continue;
       let ed = 0;
       for (const w of m.weapons) { const th = toHitStructure(st, m, S, w); if (th.ok) ed += expectedDamage(w, th.p); }
-      if (ed > 0) scored.push({ e: { id: -S.id - 1 }, ed: ed * 0.5, can: true, d: distance(m.x, m.y, S.x, S.y) });
+      if (ed > 0) scored.push({ e: { id: -S.id - 1 }, ed: ed * (S.obj ? 1.5 : 0.5), can: true, d: distance(m.x, m.y, S.x, S.y) });
     }
     for (const U of st.units || []) {
       if (U.dead || U.hidden || U.x < 0 || U.team === (m.team ?? m.side)) continue;
       let ed = 0;
       for (const w of m.weapons) { const th = toHitUnit(st, m, U, w); if (th.ok) ed += expectedDamage(w, th.p); }
-      if (ed > 0) scored.push({ e: { id: -U.id - 1000 }, ed: ed * 0.4, can: true, d: distance(m.x, m.y, U.x, U.y) });
+      if (ed > 0) scored.push({ e: { id: -U.id - 1000 }, ed: ed * (U.convoy ? 1.5 : 0.4), can: true, d: distance(m.x, m.y, U.x, U.y) });
     }
     scored.sort((a, b) => (b.can - a.can) || (b.ed - a.ed) || (a.d - b.d));
     const prev = this.ix.targetId;
@@ -537,9 +539,9 @@ export class Battle {
 
   cycleMelee() {
     const ix = this.ix, st = this.state, m = st.mechs[ix.mechId], t = st.mechs[ix.targetId];
-    if (this.structOf(ix.targetId) || this.unitOf(ix.targetId)) { toast('Only mechs can be punched or kicked.'); return; }
-    const opts = [null, ...['punch', 'kick', 'dfa'].filter((k) => toHit(st, m, t, null, { kind: k }).ok)];
-    if (opts.length < 2) { toast('Melee needs an adjacent target in your front arc.'); return; }
+    if (this.structOf(ix.targetId) || this.unitOf(ix.targetId)) { toast('Physical attacks only work on mechs.'); return; }
+    const opts = [null, ...MELEE_KINDS.filter((k) => toHit(st, m, t, null, { kind: k }).ok)];
+    if (opts.length < 2) { toast('Melee needs an adjacent target in your front arc. Charges and pushes need it straight ahead.'); return; }
     const i = opts.indexOf(ix.melee);
     ix.melee = opts[(i + 1) % opts.length];
     sfx('ui-move');
@@ -600,9 +602,9 @@ export class Battle {
     const mine = this.mySides();
     const goalSide = mine.length ? (this.isMine(side) ? side : mine[0]) : -1;
     const limit = maxRounds(st);
-    const itemTxt = st.item && !st.item.gone ? `${esc(st.item.name)}: ${st.item.carrier !== null ? 'carried by ' + esc(st.mechs[st.item.carrier].design) : 'on the ground'}` : '';
+    const itemTxt = st.item && !st.item.gone ? `${esc(st.item.name)}: ${st.item.carrier !== null ? 'carried by ' + esc(st.mechs[st.item.carrier].design) : 'on the ground'}` : esc(objectiveStatus(st, mis));
     const top = html(`<div class="hud-top">
-      <div class="mission-card panel" ${attr('Your objective', `<p>${esc(goalSide >= 0 ? st.sides[goalSide].goal : 'You are watching this battle.')}</p><p>${limit ? `Time limit: ${limit} rounds (${limit * 50} seconds).` : 'No time limit: fight to the finish.'} ${esc(mis.name)} briefings come from the original 1989 game.</p>`)}>
+      <div class="mission-card panel" ${attr('Your objective', `<p>${esc(goalSide >= 0 ? st.sides[goalSide].goal : 'You are watching this battle.')}</p><p>${limit ? `Time limit: ${limit} rounds (${limit * 50} seconds).` : 'No time limit: fight to the finish.'} ${mis.fort || mis.convoy ? '' : esc(mis.name) + ' briefings come from the original 1989 game.'}</p>`)}>
         <div class="eyebrow">${ICON.flag} ${esc(mis.name)}</div>
         <div class="goal">${esc(goalSide >= 0 ? st.sides[goalSide].goal : 'Spectating')}</div>
         ${itemTxt ? `<div class="clock">${itemTxt}</div>` : ''}</div>
@@ -645,6 +647,7 @@ export class Battle {
     this.cardsEl = html('<div></div>');
     root.appendChild(this.cardsEl);
     this.renderCards();
+    if (this.app.tutorial && !['briefing', 'pass'].includes(this.ix.mode)) root.appendChild(this.app.tutorial.panel(st, this));
     if (!['briefing', 'pass', 'over'].includes(this.ix.mode)) root.appendChild(this.stepBar());
     root.appendChild(promptBar(this.prompts(), (a) => this.onAction(a)));
     // modals
@@ -917,7 +920,7 @@ export class Battle {
     const dir = O ? 'F' : attackDirection(st, m.x, m.y, t);
     const dirTxt = S ? (S.hard ? 'Hardened' : 'Immobile') : U ? (U.inf ? 'Infantry' : U.immobile ? 'Immobile' : 'Vehicle') : { F: 'Front', L: 'Left side', R: 'Right side', B: 'Rear shot' }[dir];
     const scale = Math.max(dist + 1, ...m.weapons.map((w) => w.rng));
-    const melee = O ? [] : ['punch', 'kick', 'dfa'].map((k) => ({ k, th: toHit(st, m, t, null, { kind: k }), dmg: k === 'dfa' ? dfaDamage(m) : k === 'kick' ? Math.ceil(m.tons / 5) : Math.ceil(m.tons / 10) })).filter((x) => x.th.ok);
+    const melee = O ? [] : MELEE_KINDS.map((k) => ({ k, th: toHit(st, m, t, null, { kind: k }), dmg: meleeDamage(m, k) })).filter((x) => x.th.ok);
     const nSel = rows.filter((r) => sel.has(r.w.i) && r.th.ok).length;
     const card = html(`<div class="unit-card target panel" style="--side:${s.color}">
       <div class="uc-head"><div><div class="eyebrow">${ICON.target} Target · ${dist} hex${dist === 1 ? '' : 'es'} · ${esc(s.name)}</div><b>${esc(S ? STRUCTS[S.kind].name : U ? UNITS[U.kind].name : t.design)}</b></div>
@@ -965,7 +968,7 @@ export class Battle {
       const on = ix.melee === mo.k;
       const pct = Math.round(mo.th.p * 100);
       const row = html(`<div class="wrow melee nav ${on ? 'on' : ''}" data-key="melee-${mo.k}" ${attr(MODE_MELEE[mo.k], `<p>${MELEE_TIP[mo.k](m)}</p><p>Melee replaces your weapons this turn. Need <b>${mo.th.tn}+</b>: ${pct}%.</p><ul class="mods-list">${mo.th.mods.map(modLine).join('')}</ul>`)}>
-        <span class="chk">${on ? ICON.check : ''}</span><span class="wn"><b>${ICON.fist} ${mo.k === 'dfa' ? 'DFA' : MODE_MELEE[mo.k]}</b><small>${mo.k === 'dfa' ? `you take ${dfaSelfDamage(m)} to the legs` : 'instead of shooting'}</small></span><span></span><span class="num">${mo.dmg}</span><span class="num faint">0</span>
+        <span class="chk">${on ? ICON.check : ''}</span><span class="wn"><b>${ICON.fist} ${mo.k === 'dfa' ? 'DFA' : MODE_MELEE[mo.k]}</b><small>${mo.k === 'dfa' ? `you take ${dfaSelfDamage(m)} to the legs` : mo.k === 'charge' ? `you take ${chargeSelfDamage(t)} back` : mo.k === 'push' ? 'knocks it back a hex' : 'instead of shooting'}</small></span><span></span><span class="num">${mo.dmg}</span><span class="num faint">0</span>
         <span class="pm ${pct >= 58 ? 'good' : 'mid'}"><s style="width:${pct}%"></s><em>${pct}%</em></span></div>`);
       row.addEventListener('click', () => { ix.melee = on ? null : mo.k; sfx('ui-move'); this.renderCards(); });
       row._th = mo.th;
@@ -1020,10 +1023,13 @@ function shortReason(r) {
   return { 'Out of range': 'Too far', 'Out of arc': 'Wrong way', 'No line of sight': 'No sight', 'No ammo': 'Empty', 'Destroyed': 'Broken' }[r] || r;
 }
 
-const MODE_MELEE = { punch: 'Punch', kick: 'Kick', dfa: 'Death from above' };
+const MODE_MELEE = { punch: 'Punch', kick: 'Kick', hatchet: 'Hatchet', charge: 'Charge', push: 'Push', dfa: 'Death from above' };
 const MELEE_TIP = {
   punch: () => 'A punch does a tenth of your tonnage in damage to the upper body. It needs a working arm.',
   kick: () => 'A kick does a fifth of your tonnage in damage to the legs and can knock the target down, but if you miss you may fall over yourself.',
+  hatchet: () => 'Swing the hatchet: a fifth of your tonnage in one blow, anywhere on the target, at -1 to hit. It needs the hatchet arm and its hand.',
+  charge: (m) => `Ram the mech straight ahead: a tenth of your tonnage for every hex you walked or ran this turn (${meleeDamage(m, 'charge')} now), in 5-point groups. You take a tenth of <b>its</b> tonnage back. It is knocked back a hex, and both of you must roll (+2) to stay standing. A better pilot is harder to ram.`,
+  push: () => 'Shove the mech straight ahead back one hex with both arms. No damage, but it must roll to stay standing, and a mech pushed off a ledge two or more levels high falls the whole way. It can\'t be pushed into another mech, a building or up a cliff.',
   dfa: (m) => `Land on the target from your jump: ${dfaDamage(m)} damage to its upper body in 5-point groups, and it must roll to stay standing. Your own legs take ${dfaSelfDamage(m)} and you must roll (+4) to stay up. <b>If you miss, you crash to the ground</b> and take ${Math.ceil(m.tons / 10) * 3} damage. Woods and smoke don't help the target; the target can't be standing on higher ground.`,
 };
 export { critName, relBearing, CLASS_NAMES };

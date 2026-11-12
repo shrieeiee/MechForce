@@ -37,6 +37,7 @@ import { loadRoster, saveRoster, fitPilots, battleDone, markBattle } from './pil
 import { portraitSVG } from './portrait.js';
 import { applyBattle, restBattle, ABILITIES, RANKS } from '../core/pilots.js';
 import { showEditor } from './editor.js';
+import { Tutorial, TUTORIAL_SETUP, TUTORIAL_MECH, TUTORIAL_ENEMY } from './tutorial.js';
 
 // ------------------------------------------------------------------ boot
 const style = document.createElement('style');
@@ -255,6 +256,7 @@ class App {
     if (this.wakeLock) { try { this.wakeLock.release(); } catch {} this.wakeLock = null; }
     this.battle.stop();
     this.lobby = null;
+    this.tutorial = null;
   }
 
   attachSession(sess) {
@@ -295,6 +297,7 @@ class App {
 
   startLocal(kind, extra = {}) {
     this.endSession();
+    this.tutorial = null;
     const sess = new LocalSession(this.settings.name, platformName());
     this.attachSession(sess);
     this.localKind = kind;
@@ -303,6 +306,22 @@ class App {
     // give the player a sensible starter lance
     queueMicrotask(() => sess.send({ t: 'lance', side: 0, lance: autoLance(Math.random(), this.settings.tonnage, 4) }));
     if (kind === 'hotseat') queueMicrotask(() => sess.send({ t: 'lance', side: 1, lance: autoLance(Math.random(), this.settings.tonnage, 4) }));
+  }
+
+  // The tutorial: a fixed one-on-one against a damaged mech flown by the Easy computer,
+  // with a coach panel on the battle screen (tutorial.js)
+  startTutorial() {
+    this.startLocal('tutorial', TUTORIAL_SETUP);
+    this.tutorial = new Tutorial();
+    this.pilotPicks = {};
+    const sess = this.session;
+    queueMicrotask(() => queueMicrotask(() => {
+      if (this.session !== sess) return;
+      const foe = templateOf(TUTORIAL_ENEMY);
+      sess.send({ t: 'lance', side: 0, lance: [TUTORIAL_MECH], name: 'You' });
+      sess.send({ t: 'lance', side: 1, lance: [TUTORIAL_ENEMY], name: 'Training target', damage: [{ armor: foe.a.map((v) => Math.ceil(v * 0.4)), internal: foe.i.slice() }] });
+      sess.send({ t: 'start' });
+    }));
   }
 
   async hostLan() {
@@ -411,6 +430,7 @@ class App {
     const saved = loadResume();
     const items = [
       ...(saved ? [{ k: 'resume', label: 'Resume battle', hint: saved.title + ' · ' + new Date(saved.at).toLocaleDateString(), fn: () => this.resumeLocal() }] : []),
+      ...(this.settings.tutorialDone ? [] : [{ k: 'tutorial', label: 'Tutorial', hint: 'Learn to fight in one short battle', fn: () => this.startTutorial() }]),
       { k: 'skirmish', label: 'Skirmish', hint: 'You vs the computer', fn: () => this.startLocal('skirmish') },
       { k: 'campaign', label: 'Campaign', hint: 'Run a mercenary company', fn: () => showCampaign(this, { onExit: () => this.showTitle() }) },
       { k: 'hostp2p', label: 'Host Online', hint: 'Friends join with a code', fn: () => this.hostOnline() },
@@ -422,6 +442,7 @@ class App {
       { k: 'lab', label: 'Mech Lab', hint: 'Design your own mechs', fn: () => this.openLab(null, -1, () => this.showTitle()) },
       { k: 'editor', label: 'Map Editor', hint: 'Build battlefields and defences', fn: () => showEditor(this, { onExit: () => this.showTitle() }) },
       { k: 'replays', label: 'Replays', hint: 'Watch past battles', fn: () => showReplays(this, { onExit: () => this.showTitle() }) },
+      ...(this.settings.tutorialDone ? [{ k: 'tutorial', label: 'Tutorial', hint: 'A short guided battle', fn: () => this.startTutorial() }] : []),
       { k: 'manual', label: 'How to Play', hint: 'Turns, aiming, heat, damage', fn: () => this.showManual() },
       { k: 'settings', label: 'Settings', hint: '', fn: () => this.showSettings(() => this.showTitle()) },
       canQuit ? { k: 'quit', label: 'Quit', hint: '', fn: () => native.quit() } : null,
@@ -654,7 +675,7 @@ class App {
   // ---- save and resume: local battles are saved after every move, and can be picked up
   // again from the title screen after closing the game
   autosave(st) {
-    if (!this.session || !this.session.local || !this.session.room) return;
+    if (!this.session || !this.session.local || !this.session.room || this.tutorial) return;
     if (st && st.over) { clearResume(); return; }
     const snap = this.session.room.snapshot();
     if (!snap) return;
@@ -1090,7 +1111,9 @@ class App {
     }).join('');
     const mvp = st.mechs.slice().sort((a, b) => b.stats.dmg + b.stats.kills * 30 - (a.stats.dmg + a.stats.kills * 30))[0];
     // the results can be shown more than once (late updates, View battlefield): settle once
-    if (!this.resultsOf || this.resultsOf.gid !== st.gid) this.resultsOf = { gid: st.gid, deb: this.recordPilots(st), camp: this.settleCampaign(st) };
+    if (!this.resultsOf || this.resultsOf.gid !== st.gid) this.resultsOf = { gid: st.gid, deb: this.tutorial ? null : this.recordPilots(st), camp: this.settleCampaign(st) };
+    const tut = !!this.tutorial;
+    if (tut && won && !this.settings.tutorialDone) { this.settings.tutorialDone = true; this.saveSettings(); }
     const { deb, camp } = this.resultsOf;
     const debrief = deb ? `<div class="eyebrow">MechWarriors</div><div class="debrief">${deb.map((d) => `<div class="db-row">${portraitSVG(d.p.portrait, { size: 40, dead: d.fate === 'killed', color: st.sides[d.m.side].color })}
       <div class="grow"><b>${esc(d.p.callsign)}</b> <span class="faint">${esc(d.m.design)}</span><div class="sm ${d.fate === 'killed' ? 'bad-t' : d.fate === 'ok' ? 'ok-t' : 'warn'}">${d.fate === 'killed' ? 'Killed in action' : d.fate === 'ejected' ? 'Ejected' + (d.rest ? ` · recovering for ${d.rest} battle${d.rest > 1 ? 's' : ''}` : '') : d.fate === 'wounded' ? `Wounded · recovering for ${d.rest} battle${d.rest > 1 ? 's' : ''}` : 'Unhurt'}</div></div>
@@ -1098,18 +1121,21 @@ class App {
     const canRematch = this.isHost;
     const el = html(`<div class="modal wide panel" style="border-top:3px solid ${w && wTeam >= 0 ? tColor(wTeam) : 'var(--amber)'}">
       <div class="eyebrow">${esc(MISSIONS.find((m) => m.id === st.mission).name)} · ${st.round} rounds · T+${(st.round - 1) * 50}s</div>
-      <h2 style="font-size:40px">${esc(title)}</h2><p class="brief">${esc(w ? w.reason : '')}</p>
+      <h2 style="font-size:40px">${esc(tut && won ? 'Tutorial complete' : title)}</h2><p class="brief">${esc(tut ? (won ? 'You know how to move, shoot, manage heat and finish a kill. A skirmish against the computer is the next step; How to Play covers the rest.' : 'Your mech is out of the fight. Try again: keep your front to the enemy and watch the heat.') : w ? w.reason : '')}</p>
       <div style="overflow-x:auto"><table class="results-table"><tr><th>Force</th><th>Mechs left</th><th>Damage dealt</th><th>Kills</th><th>Accuracy</th></tr>${rows}</table></div>
       ${camp ? campaignDebriefHTML(camp.co, camp.res) : ''}
       ${debrief}
       ${mvp ? `<div class="dim">Top performer: <b style="color:var(--ink)">${esc(mvp.design)}</b> (${esc(mvp.pilot.name)}) — ${mvp.stats.dmg} damage, ${mvp.stats.kills} kill${mvp.stats.kills === 1 ? '' : 's'}</div>` : ''}
-      <div class="stack">${this.campaignRun ? '<div class="btn primary nav" data-key="company">Back to the company</div>' : canRematch ? '<div class="btn primary nav" data-key="again">Back to lobby</div>' : '<div class="faint">Waiting for the host…</div>'}
+      <div class="stack">${tut ? `<div class="btn primary nav" data-key="${won ? 'tskirmish' : 'tagain'}">${won ? 'Play a skirmish' : 'Try again'}</div><div class="btn nav" data-key="${won ? 'tagain' : 'tskirmish'}">${won ? 'Run the tutorial again' : 'Play a skirmish'}</div>` : this.campaignRun ? '<div class="btn primary nav" data-key="company">Back to the company</div>' : canRematch ? '<div class="btn primary nav" data-key="again">Back to lobby</div>' : '<div class="faint">Waiting for the host…</div>'}
       ${deb ? '<div class="btn nav" data-key="barracks">Barracks — spend experience</div>' : ''}
       <div class="btn nav ${this.lastReplay && this.lastReplay.start && this.lastReplay.start.gid === st.gid ? '' : 'hidden'}" data-key="watch">Watch the replay</div>
       <div class="btn nav" data-key="field">View battlefield</div>
       <div class="btn nav" data-key="quit">Quit to title</div></div></div>`);
     const coBtn = $('[data-key=company]', el);
     if (coBtn) coBtn.addEventListener('click', () => { this.closeModal(); this.endSession(); this.campaignRun = null; showCampaign(this, { onExit: () => this.showTitle(), tab: 'hangar' }); });
+    const ts = $('[data-key=tskirmish]', el), ta = $('[data-key=tagain]', el);
+    if (ts) ts.addEventListener('click', () => { this.closeModal(); this.startLocal('skirmish'); });
+    if (ta) ta.addEventListener('click', () => { this.closeModal(); this.startTutorial(); });
     const again = $('[data-key=again]', el);
     if (again) again.addEventListener('click', () => { this.closeModal(); this.session.send({ t: 'lobby' }); });
     $('[data-key=field]', el).addEventListener('click', () => { this.closeModal(); });

@@ -1099,6 +1099,11 @@ export class Renderer {
           }
           break;
         }
+        case 'uexit': {
+          const uv = this.units && this.units.get(e.uid);
+          if (uv) { this.float(uv, 'AWAY', 'info'); await sleep(350 / sp); uv.state = { ...uv.state, dead: true }; uv.model.root.visible = false; }
+          break;
+        }
         case 'units': break;
         case 'sgone': {
           const sv = this.structs && this.structs.get(e.sid);
@@ -1132,6 +1137,15 @@ export class Renderer {
           break;
         }
         case 'blast': await this.animBlast(e, sp); break;
+        case 'shove': if (v && v.model.root.visible) {
+          // knocked back a hex by a charge or a push: skid there, kicking up dirt
+          const root = v.model.root, a0 = root.position.clone(), b = hexWorld(e.x, e.y);
+          const b0 = new THREE.Vector3(b.x, this.tileTop(e.x, e.y), b.z);
+          this.spawn(a0.clone().add(new THREE.Vector3(0, 0.15, 0)), { n: 14, color: '#8a7a66', size: 0.45, speed: 1.8, life: 0.9, normal: true, opacity: 0.5 });
+          v.animating = true;
+          await this.tween(260 / sp, (k) => { const q = 1 - (1 - k) * (1 - k); root.position.lerpVectors(a0, b0, q); if (b0.y < a0.y - 0.5) root.position.y = a0.y + (b0.y - a0.y) * k * k; });
+          v.animating = false;
+        } break;
         case 'eject': if (v) await this.animEject(v, e, sp); break;
         case 'selfdestruct': if (v) {
           if (e.ok) { this.float(v, 'REACTOR OVERLOAD', 'crit'); sfx('alarm'); const p = this.bodyPoint(v, 0.1); for (let i = 0; i < 4; i++) { this.flash(p, 0.6 + i * 0.3); await sleep(140 / sp); } }
@@ -1387,9 +1401,16 @@ export class Renderer {
     this.aimAt(v, t);
     const root = v.model.root;
     const p0 = root.position.clone();
-    const dir = t.model.root.position.clone().sub(p0).multiplyScalar(0.3);
-    await this.tween(180 / sp, (k) => { root.position.copy(p0).addScaledVector(dir, k); });
-    if (e.hit) { const p = this.bodyPoint(t, 0.2); this.explosion(p, 0.7); sfx('melee'); this.float(t, String(e.dmg), 'dmg'); }
+    const ram = e.kind === 'charge';
+    const dir = t.model.root.position.clone().sub(p0).multiplyScalar(ram ? 0.55 : e.kind === 'push' ? 0.4 : 0.3);
+    if (ram) { await this.tween(140 / sp, (k) => { root.position.copy(p0).addScaledVector(dir, -0.25 * k); }); sfx('step', { tons: v.state.tons, pan: this.panOf(p0) }); }
+    await this.tween((ram ? 150 : 180) / sp, (k) => { root.position.copy(p0).addScaledVector(dir, ram ? -0.25 + 1.25 * k * k : k); });
+    if (e.hit) {
+      const p = this.bodyPoint(t, 0.2); this.explosion(p, ram ? 1.2 : e.kind === 'push' ? 0.3 : 0.7); sfx('melee');
+      if (ram) sfx('boom', { size: 0.7, pan: this.panOf(p) });
+      if (e.kind === 'hatchet') this.spawn(p, { n: 18, color: '#ffe08a', size: 0.12, speed: 5, life: 0.5, gravity: 9, grow: 0 });
+      this.float(t, e.kind === 'push' ? 'PUSHED' : ram ? `${e.dmg} RAM` : String(e.dmg), e.kind === 'push' ? 'info' : 'dmg');
+    }
     else { sfx('servo'); this.float(t, 'MISS', 'miss'); }
     await this.tween(220 / sp, (k) => { root.position.copy(p0).addScaledVector(dir, 1 - k); });
   }

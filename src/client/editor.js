@@ -164,7 +164,7 @@ export function showEditor(app, { map: startMap, onExit } = {}) {
       if (ui >= 0) map.u.splice(ui, 1);
       const old = map.s.findIndex((d) => d.x === px && d.y === py);
       if (old < 0 && map.s.length >= MAX_STRUCTS) return 'full';
-      const d = { k: ed.kind, x: px, y: py, f, team: K.slots ? team : -1, load: K.slots ? (ed.load[ed.kind] || []).slice(0, K.slots) : [] };
+      const d = { k: ed.kind, x: px, y: py, f, team: K.slots || K.obj ? team : -1, load: K.slots ? (ed.load[ed.kind] || []).slice(0, K.slots) : [] };
       if (old >= 0) map.s[old] = d; else map.s.push(d);
       return null;
     };
@@ -346,7 +346,7 @@ export function showEditor(app, { map: startMap, onExit } = {}) {
           ${ed.tool === 'build' ? STRUCT_KINDS.map((k) => `<div class="btn sm ${k === ed.kind ? 'on' : ''}" data-kind="${k}" ${attr(STRUCTS[k].name, structTip({ kind: k, load: STRUCTS[k].slots ? ed.load[k] : [], cf: STRUCTS[k].cf, cfMax: STRUCTS[k].cf, hard: STRUCTS[k].hard }))}>${esc(STRUCTS[k].name)}</div>`).join('') : ''}
         </div>
         ${ed.tool === 'build' ? `<div class="ed-sub">
-          ${K.slots ? `<div class="btn sm" data-act="owner" ${attr('Owner', '<p>Which deployment zone\'s side the emplacement fights for. In a 1-on-1 battle West and East are the two sides; North and South join in 3- and 4-sided battles. Neutral structures shoot at nobody.</p>')}><span class="dot" style="background:${ownerColor(ed.owner)}"></span>${esc(ownerName(ed.owner))}</div>` : ''}
+          ${K.slots || K.obj ? `<div class="btn sm" data-act="owner" ${attr('Owner', '<p>Which deployment zone\'s side the emplacement fights for. In a 1-on-1 battle West and East are the two sides; North and South join in 3- and 4-sided battles. Neutral structures shoot at nobody.</p>')}><span class="dot" style="background:${ownerColor(ed.owner)}"></span>${esc(ownerName(ed.owner))}</div>` : ''}
           ${Array.from({ length: K.slots }, (_, k) => `<div class="btn sm" data-load="${k}">${esc(ed.load[ed.kind][k] ? LOADOUTS[ed.load[ed.kind][k]].name : '+ weapon')}</div>`).join('')}
           <div class="btn sm" data-act="face" ${attr('Facing', '<p>Which way new structures face. Gun emplacements turn to shoot anywhere; bunkers and walls look the same either way round.</p>')}>Facing ${FACE_ARROW[ed.facing]}</div></div>`
         : ed.tool === 'troops' ? `<div class="ed-sub">

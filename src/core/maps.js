@@ -40,7 +40,7 @@ export function sanitizeMap(m) {
     const slots = STRUCTS[d.k].slots;
     const load = (Array.isArray(d.load) ? d.load : []).filter((l) => LOADOUT_IDS.includes(l)).slice(0, slots);
     if (slots && !load.length) load.push('ac10');
-    s.push({ k: d.k, x, y, f: int(d.f, 0, 5), team: slots ? int(d.team, -1, 3, -1) : -1, load });
+    s.push({ k: d.k, x, y, f: int(d.f, 0, 5), team: slots || STRUCTS[d.k].obj ? int(d.team, -1, 3, -1) : -1, load });
   }
   // conventional forces: infantry and vehicles, one per hex, not on structures
   const u = [];

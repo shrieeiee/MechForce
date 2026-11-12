@@ -637,6 +637,22 @@ export function buildStructure(kind, weapons, colorHex) {
     M(box(1.32, 0.06, 0.04), mats.trim, 0, 1.4, 0.58);
     root.add(torso);
     height = 1.8;
+  } else if (kind === 'hq') {
+    // command post: a squat armoured blockhouse in its side's colours, with a comms mast and dish
+    M(plate(1.5, 0.7, 1.3, 0.12), concreteMat, 0, 0.35, 0);
+    M(plate(1.0, 0.5, 0.9, 0.15), mats.body, 0, 0.95, -0.05);
+    M(box(1.52, 0.07, 1.32), mats.trim, 0, 0.72, 0);
+    M(box(1.02, 0.06, 0.92), mats.trim, 0, 1.22, -0.05);
+    for (let c = 0; c < 4; c++) M(box(0.16, 0.12, 0.02), windowMat, -0.33 + c * 0.22, 1.0, 0.405);
+    for (const fx of [-1, 1]) M(box(0.02, 0.12, 0.5), windowMat, fx * 0.505, 1.0, -0.05);
+    M(box(0.34, 0.4, 0.05), concreteDark, 0, 0.2, 0.66);
+    for (const sx of [-1, 1]) M(box(0.3, 0.1, 0.06), mats.hazard, sx * 0.5, 0.1, 0.66);
+    M(cyl(0.02, 0.03, 1.0, 6), mats.chrome, -0.32, 1.72, -0.3);
+    M(sphere(0.045, 8, 6), mats.glow || mats.hazard, -0.32, 2.24, -0.3);
+    const dish = M(cyl(0.26, 0.05, 0.1, 14), mats.joint, 0.3, 1.42, -0.25); dish.rotation.x = -0.7;
+    M(cyl(0.03, 0.03, 0.2, 6), mats.dark, 0.3, 1.3, -0.25);
+    root.add(torso);
+    height = 1.5;
   } else { // wall
     M(plate(1.75, 0.62, 0.38, 0.12), concreteMat, 0, 0.31, 0);
     for (let k = 0; k < 5; k++) M(box(0.22, 0.14, 0.4), concreteDark, -0.7 + k * 0.35, 0.68, 0);
@@ -734,6 +750,21 @@ export function buildUnit(kind, weapons, colorHex, motion, inf) {
         mount(torso, 0.08, 0.1, 0.1, 0.65);
       }
       height = 0.55;
+    } else if (kind === 'truck') {
+      // supply hauler: tracked chassis, armoured cab up front, crates lashed down behind
+      const L = 1.0, W = 0.52;
+      for (const sx of [-1, 1]) {
+        M(plate(0.13, 0.17, L * 1.02, 0.4), tyreMat, sx * (W / 2 + 0.03), 0.1, 0);
+        for (let k = 0; k < 5; k++) { const wh = M(cyl(0.055, 0.055, 0.03, 10), mats.joint, sx * (W / 2 + 0.1), 0.08, -L / 2 + 0.12 + k * (L - 0.24) / 4); wh.rotation.z = Math.PI / 2; }
+      }
+      M(box(W, 0.1, L), mats.dark, 0, 0.2, 0);
+      M(plate(W * 0.96, 0.3, 0.3, 0.2), mats.body, 0, 0.4, 0.33);
+      M(box(W * 0.8, 0.1, 0.02), mats.glass, 0, 0.46, 0.485);
+      M(box(W * 0.9, 0.26, 0.6), mats.trim, 0, 0.38, -0.17);
+      M(box(W * 0.92, 0.03, 0.62), mats.body, 0, 0.52, -0.17);
+      for (const z of [-0.36, -0.17, 0.02]) M(box(W * 0.94, 0.28, 0.02), mats.dark, 0, 0.38, z);
+      torso.position.set(0, 0.5, 0.3);
+      height = 0.6;
     } else {
       // tracked: light tank or battle tank
       const big = kind === 'tank';
