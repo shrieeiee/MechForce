@@ -3,6 +3,23 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+
+// Runs between the scene and the bloom. On real GPUs the scene is drawn into a half-float
+// buffer: a single overflowing or NaN pixel (a specular hotspot, a degenerate normal) gets
+// smeared by the bloom blur into a blinding white patch. Zero anything invalid and cap the
+// brightness so the glow can never blow out the picture.
+const SANITIZE = {
+  uniforms: { tDiffuse: { value: null }, cap: { value: 3.0 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float cap; varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      bvec3 bad = bvec3(isnan(c.r) || isinf(c.r), isnan(c.g) || isinf(c.g), isnan(c.b) || isinf(c.b));
+      vec3 rgb = any(bad) ? vec3(0.0) : clamp(c.rgb, 0.0, cap);
+      gl_FragColor = vec4(rgb, (isnan(c.a) || isinf(c.a)) ? 1.0 : clamp(c.a, 0.0, 1.0));
+    }`,
+};
 import { center, DIR_ANGLE, toAxial, fromAxial, neighbor } from '../core/hex.js';
 import { WEAPONS, TERRAIN, UNITS } from '../core/data.js';
 import { view as palView, RING_SEGMENTS, shapeFor } from './palette.js';
@@ -98,6 +115,7 @@ export class Renderer {
     if (q !== 'low') {
       this.composer = new EffectComposer(this.gl);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
+      this.composer.addPass(new ShaderPass(SANITIZE));
       this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.4, 0.4, 0.92);
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
