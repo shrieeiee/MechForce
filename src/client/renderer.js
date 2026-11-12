@@ -46,7 +46,7 @@ export class Renderer {
     canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; console.warn('WebGL context lost'); });
     canvas.addEventListener('webglcontextrestored', () => { this.lost = false; if (this.map) { const m = this.map; this.updateTerrain(m); } });
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
-    this.gl.toneMappingExposure = 1.05;
+    this.gl.toneMappingExposure = 1.0;
     this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 400);
@@ -98,7 +98,7 @@ export class Renderer {
     if (q !== 'low') {
       this.composer = new EffectComposer(this.gl);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.55, 0.5, 0.82);
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.4, 0.4, 0.92);
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
     } else this.composer = null;
@@ -187,7 +187,7 @@ export class Renderer {
     tg.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: map.theme === 'snow' ? '#5a6878' : '#000000', transparent: true, opacity: map.theme === 'snow' ? 0.22 : 0.16 })));
     if (waterPos.length) {
       const wg = new THREE.BufferGeometry(); wg.setAttribute('position', new THREE.Float32BufferAttribute(waterPos, 3)); wg.setIndex(waterIdx); wg.computeVertexNormals();
-      this.waterMat = new THREE.MeshStandardMaterial({ color: th.water, transparent: !th.lava, opacity: th.lava ? 1 : 0.72, roughness: th.lava ? 0.7 : 0.08, metalness: th.lava ? 0 : 0.3,
+      this.waterMat = new THREE.MeshStandardMaterial({ color: th.water, transparent: !th.lava, opacity: th.lava ? 1 : 0.72, roughness: th.lava ? 0.7 : 0.3, metalness: th.lava ? 0 : 0.1,
         emissive: th.lava ? new THREE.Color('#ff3c00') : new THREE.Color('#0a2a3a'), emissiveIntensity: th.lava ? 1.3 : 0.3 });
       tg.add(new THREE.Mesh(wg, this.waterMat));
     } else this.waterMat = null;
@@ -259,9 +259,10 @@ export class Renderer {
     this.scene.background = new THREE.Color(th.sky);
     this.scene.fog = new THREE.Fog(th.fog, 40, 110);
     this.hemi.color.set(th.hemi[0]); this.hemi.groundColor.set(th.hemi[1]);
-    this.hemi.intensity = map.theme === 'lunar' ? 0.35 : 0.9;
+    // a softer sun and more sky light: bright enough to read, without glints off water and metal
+    this.hemi.intensity = map.theme === 'lunar' ? 0.35 : 1.05;
     this.sun.color.set(th.sun);
-    this.sun.intensity = map.theme === 'volcanic' ? 1.4 : 2.3;
+    this.sun.intensity = { volcanic: 1.4, snow: 1.5, desert: 1.65 }[map.theme] ?? 1.9;
     this.buildTerrain(map);
     const { w, h } = map;
     const cx = (this.bounds.x0 + this.bounds.x1) / 2, cz = (this.bounds.z0 + this.bounds.z1) / 2;
